@@ -3,7 +3,7 @@
 Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm **SM7150** /
 Snapdragon 732G). Сборка целиком в GitHub Actions, локально ничего не нужно.
 
-Ник порта: **@qualixxe096**.
+Автор: **@qualixxe096**.
 
 ## Что такое mainline и зачем он тут
 
