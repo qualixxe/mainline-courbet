@@ -1,0 +1,233 @@
+name: build mainline kernel for courbet
+
+# courbet = Xiaomi Mi 11 Lite 4G, SM7150 / Snapdragon 732G.
+#
+# SM7150 has no support in torvalds/linux. The dts and the K9A panel driver live
+# in the sm7150-mainline community tree; courbet's board dts survived only up to
+# v6.13.4 there and was forward-ported to 6.17 on kevinwidjaja21/linux's
+# courbet_main branch. That branch is the default source here.
+#
+# Two boot images are produced because courbet's bootloader has two documented
+# conventions and we cannot test locally:
+#   boot.img        header v1, Image.gz with the dtb appended to the kernel
+#                   (the postmarketOS convention, deviceinfo header_version=1)
+#   boot-stock.img  header v2, uncompressed Image, dtb in its own section after
+#                   the ramdisk (what the stock Android boot image does:
+#                   header_size=1660 @1644, dtb_size @1648)
+# Both are meant for `fastboot boot`, which loads into RAM and writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: 'kernel source repo'
+        required: false
+        default: 'kevinwidjaja21/linux'
+      kernel_ref:
+        description: 'branch or tag (courbet_main = 6.17 with courbet dts + panel)'
+        required: false
+        default: 'courbet_main'
+      with_firmware:
+        description: 'bundle courbet firmware blobs into the initramfs'
+        required: false
+        default: 'true'
+      cmdline:
+        description: 'kernel command line baked into both boot images'
+        required: false
+        default: 'console=tty0 loglevel=8 ignore_loglevel'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'config/**'
+      - 'initramfs/**'
+      - 'scripts/**'
+
+permissions:
+  contents: write
+
+env:
+  CROSS: aarch64-linux-gnu-
+  DTB: sm7150-xiaomi-courbet.dtb
+  PAGESIZE: '4096'
+  BASE: '0x00000000'
+  KERNEL_OFFSET: '0x00008000'
+  RAMDISK_OFFSET: '0x01000000'
+  TAGS_OFFSET: '0x00000100'
+  DTB_OFFSET: '0x01f00000'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            python3 cpio gzip lz4 zstd xz-utils rsync kmod \
+            device-tree-compiler curl ca-certificates git file
+          mkdir -p out
+
+      - name: Fetch kernel source
+        run: |
+          set -euo pipefail
+          REPO="${{ github.event.inputs.kernel_repo || 'kevinwidjaja21/linux' }}"
+          REF="${{ github.event.inputs.kernel_ref || 'courbet_main' }}"
+          echo "source: $REPO @ $REF"
+          git clone --depth 1 --single-branch --branch "$REF" \
+            "https://github.com/$REPO.git" linux
+          git -C linux log -1 --format='%H %s' | tee out/kernel-commit.txt
+          head -5 linux/Makefile
+          test -f "linux/arch/arm64/boot/dts/qcom/$DTB" || {
+            echo "FATAL: $DTB not present in $REPO @ $REF" >&2
+            ls linux/arch/arm64/boot/dts/qcom/ | grep -E 'sm7150|sm6150' >&2 || true
+            exit 1
+          }
+          test -f linux/drivers/gpu/drm/panel/panel-k9a-36-02-0a-mp-dsc.c || {
+            echo "FATAL: K9A panel driver missing in $REPO @ $REF" >&2
+            exit 1
+          }
+
+      - name: Apply courbet fixups
+        run: |
+          set -euo pipefail
+          DTS="linux/arch/arm64/boot/dts/qcom/$DTB"
+          DTS="${DTS%.dtb}.dts"
+          cat patches/courbet-usb-peripheral.dtsi >> "$DTS"
+          echo "--- tail of $DTS ---"
+          tail -12 "$DTS"
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          cp config/base.config linux/.config
+          cd linux
+          ./scripts/kconfig/merge_config.sh -m .config ../config/courbet.fragment
+          make ARCH=arm64 CROSS_COMPILE="$CROSS" olddefconfig
+          cp .config ../out/config
+          echo "--- critical symbols ---"
+          for s in DRM_PANEL_K9A_36_02_0A DRM_MSM_DPU DRM_MSM_DSI_10NM_PHY \
+                   SM_GCC_7150 PINCTRL_SM7150 INTERCONNECT_QCOM_SM7150 \
+                   SCSI_UFS_QCOM PHY_QCOM_QMP_UFS USB_CONFIGFS_ACM \
+                   PSTORE_RAM FRAMEBUFFER_CONSOLE SERIAL_QCOM_GENI_CONSOLE; do
+            grep -E "^CONFIG_$s=" .config || { echo "FATAL: CONFIG_$s not enabled" >&2; exit 1; }
+          done
+          make ARCH=arm64 CROSS_COMPILE="$CROSS" kernelrelease | tee ../out/kernelrelease.txt
+
+      - name: Build kernel
+        run: |
+          set -euo pipefail
+          cd linux
+          make ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$(nproc)" \
+            Image Image.gz dtbs modules 2>&1 | tee ../out/build.log
+          echo "--- artifacts ---"
+          ls -la arch/arm64/boot/Image arch/arm64/boot/Image.gz
+          ls -la "arch/arm64/boot/dts/qcom/$DTB"
+
+      - name: Fetch courbet firmware
+        if: ${{ github.event.inputs.with_firmware != 'false' }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 \
+            https://github.com/sm7150-mainline/firmware-xiaomi-courbet.git firmware
+          du -sh firmware/lib/firmware/qcom/sm7150/courbet || true
+
+      - name: Build initramfs
+        run: |
+          set -euo pipefail
+          FW=""
+          [ -d firmware ] && FW="$PWD/firmware"
+          sudo scripts/build-initramfs.sh "$PWD/rootfs" "$PWD/out/initramfs.cpio.gz" \
+            "$PWD/linux" "$FW" 2>&1 | tee -a out/build.log
+          sudo chown "$(id -u):$(id -g)" out/initramfs.cpio.gz
+
+      - name: Package boot images
+        run: |
+          set -euo pipefail
+          CMDLINE="${{ github.event.inputs.cmdline || 'console=tty0 loglevel=8 ignore_loglevel' }}"
+          K=linux/arch/arm64/boot
+          cp "$K/Image"    out/Image
+          cp "$K/Image.gz" out/Image.gz
+          cp "$K/dts/qcom/$DTB" "out/$DTB"
+
+          # postmarketOS convention: dtb appended to the compressed kernel.
+          cat "$K/Image.gz" "$K/dts/qcom/$DTB" > out/Image.gz-dtb
+          python3 scripts/mkbootimg.py \
+            --header_version 1 \
+            --kernel out/Image.gz-dtb \
+            --ramdisk out/initramfs.cpio.gz \
+            --cmdline "$CMDLINE" \
+            --base "$BASE" --pagesize "$PAGESIZE" \
+            --kernel_offset "$KERNEL_OFFSET" \
+            --ramdisk_offset "$RAMDISK_OFFSET" \
+            --tags_offset "$TAGS_OFFSET" \
+            -o out/boot.img
+
+          # stock Android convention: uncompressed Image, dtb in its own section.
+          python3 scripts/mkbootimg.py \
+            --header_version 2 \
+            --kernel "$K/Image" \
+            --ramdisk out/initramfs.cpio.gz \
+            --dtb "$K/dts/qcom/$DTB" \
+            --cmdline "$CMDLINE" \
+            --base "$BASE" --pagesize "$PAGESIZE" \
+            --kernel_offset "$KERNEL_OFFSET" \
+            --ramdisk_offset "$RAMDISK_OFFSET" \
+            --tags_offset "$TAGS_OFFSET" \
+            --dtb_offset "$DTB_OFFSET" \
+            -o out/boot-stock.img
+
+          echo "--- boot image headers ---"
+          python3 scripts/bootinfo.py out/boot.img out/boot-stock.img
+          ls -la out/
+
+      - name: Checksums and manifest
+        run: |
+          set -euo pipefail
+          cd out
+          rm -f Image.gz-dtb
+          sha256sum * > SHA256SUMS.txt
+          {
+            echo "device   : Xiaomi Mi 11 Lite 4G (courbet, M2101K9AG)"
+            echo "soc      : Qualcomm SM7150 / Snapdragon 732G"
+            echo "kernel   : $(cat kernelrelease.txt)"
+            echo "source   : $(cat kernel-commit.txt)"
+            echo "dtb      : $DTB"
+            echo "cmdline  : ${{ github.event.inputs.cmdline || 'console=tty0 loglevel=8 ignore_loglevel' }}"
+            echo "run      : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > MANIFEST.txt
+          cat MANIFEST.txt
+          du -sh .
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KREL="$(cat out/kernelrelease.txt)"
+          TAG="courbet-${KREL}-${{ github.run_number }}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "courbet mainline ${KREL} (run ${{ github.run_number }})" \
+            --notes-file out/MANIFEST.txt \
+            out/boot.img out/boot-stock.img out/initramfs.cpio.gz \
+            out/Image.gz out/$DTB out/config out/MANIFEST.txt \
+            out/SHA256SUMS.txt out/build.log out/kernel-commit.txt
+          echo "released $TAG"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            out/build.log
+            out/config
+          if-no-files-found: ignore
+          retention-days: 7

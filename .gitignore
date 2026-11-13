@@ -1,0 +1,6 @@
+out/
+linux/
+firmware/
+rootfs/
+__pycache__/
+*.pyc

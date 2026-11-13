@@ -1,0 +1,12 @@
+# Everything here is consumed by Linux runners. CRLF in init or the shell
+# scripts breaks them in ways that are annoying to diagnose from a CI log.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.dtsi text eol=lf
+*.fragment text eol=lf
+*.config text eol=lf
+initramfs/init text eol=lf
+*.mbn binary
+*.gz binary

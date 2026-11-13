@@ -1,0 +1,93 @@
+#!/bin/sh
+# courbet mainline bring-up initramfs PID 1.
+#
+# There is no rootfs to switch into: the point of this image is to prove the
+# kernel reached userspace and to hand over an interactive shell. The shell is
+# exposed as a USB ACM gadget, which shows up as a plain COM port on the host
+# and needs no network configuration or extra drivers on Windows.
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /tmp /run /config
+mount -t devpts devpts /dev/pts
+mount -t tmpfs  tmpfs  /tmp
+mount -t tmpfs  tmpfs  /run
+
+dmesg > /tmp/dmesg.txt 2>/dev/null
+
+banner() {
+	echo ""
+	echo "=============================================================="
+	echo " courbet mainline bring-up"
+	echo "=============================================================="
+	uname -a
+	echo "cmdline: $(cat /proc/cmdline)"
+	echo ""
+	echo " pstore : ls /sys/fs/pstore"
+	echo " log    : dmesg | less   (also /tmp/dmesg.txt)"
+	echo " config : zcat /proc/config.gz"
+	echo " reboot : reboot -f"
+	echo "=============================================================="
+	echo ""
+}
+
+# --- USB ACM gadget -------------------------------------------------
+mount -t configfs configfs /config 2>/dev/null
+
+UDC=$(ls /sys/class/udc 2>/dev/null | head -n1)
+G=/config/usb_gadget/g1
+
+if [ -n "$UDC" ] && [ -d /config/usb_gadget ]; then
+	mkdir -p "$G"
+	echo 0x1d6b > "$G/idVendor"
+	echo 0x0104 > "$G/idProduct"
+	mkdir -p "$G/strings/0x409"
+	echo "0123456789"      > "$G/strings/0x409/serialnumber"
+	echo "qualixxe"        > "$G/strings/0x409/manufacturer"
+	echo "courbet mainline" > "$G/strings/0x409/product"
+	mkdir -p "$G/configs/c.1/strings/0x409"
+	echo "acm" > "$G/configs/c.1/strings/0x409/configuration"
+	mkdir -p "$G/functions/acm.usb0"
+	ln -s "$G/functions/acm.usb0" "$G/configs/c.1/"
+	echo "$UDC" > "$G/UDC"
+	echo "gadget: ACM on UDC $UDC"
+else
+	echo "gadget: no UDC found, serial shell unavailable"
+fi
+
+# --- shells ---------------------------------------------------------
+# tty1 lands on the panel via fbcon; ttyGS0 lands on the host COM port.
+setsid sh -c 'exec sh </dev/tty1 >/dev/tty1 2>&1' &
+
+if [ -e /dev/ttyGS0 ]; then
+	(
+		while :; do
+			banner > /dev/ttyGS0
+			setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1'
+			sleep 1
+		done
+	) &
+else
+	echo "no /dev/ttyGS0 yet; waiting for gadget"
+	(
+		for i in $(seq 1 30); do
+			[ -e /dev/ttyGS0 ] && break
+			sleep 1
+		done
+		if [ -e /dev/ttyGS0 ]; then
+			while :; do
+				banner > /dev/ttyGS0
+				setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1'
+				sleep 1
+			done
+		fi
+	) &
+fi
+
+banner
+echo "PID 1 shell on /dev/console. Kernel is alive."
+exec sh

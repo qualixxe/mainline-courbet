@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// Appended to sm7150-xiaomi-courbet.dts at build time.
+//
+// The common dtsi leaves the controller in "otg" with a usb-role-switch and a
+// connector whose power-role is "source", so the port negotiates host mode and
+// the ACM gadget never binds. Bring-up needs the phone to be a device: this is
+// the same override upstream sm7125-xiaomi-common.dtsi uses for curtana.
+
+&usb_1_dwc3 {
+	dr_mode = "peripheral";
+	/delete-property/ usb-role-switch;
+};
