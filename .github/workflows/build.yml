@@ -143,7 +143,7 @@ jobs:
           set -euo pipefail
           FW=""
           [ -d firmware ] && FW="$PWD/firmware"
-          sudo scripts/build-initramfs.sh "$PWD/rootfs" "$PWD/out/initramfs.cpio.gz" \
+          sudo bash scripts/build-initramfs.sh "$PWD/rootfs" "$PWD/out/initramfs.cpio.gz" \
             "$PWD/linux" "$FW" 2>&1 | tee -a out/build.log
           sudo chown "$(id -u):$(id -g)" out/initramfs.cpio.gz
 
