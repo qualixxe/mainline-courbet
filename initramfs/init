@@ -19,6 +19,11 @@ mount -t tmpfs  tmpfs  /run
 
 dmesg > /tmp/dmesg.txt 2>/dev/null
 
+# ramoops lives at 9d800000; without this mount the records from the previous
+# (possibly failed) boot are unreachable, which is the whole point of having it.
+mkdir -p /sys/fs/pstore
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+
 banner() {
 	echo ""
 	echo "=============================================================="
@@ -51,6 +56,7 @@ if [ -n "$UDC" ] && [ -d /config/usb_gadget ]; then
 	echo "courbet mainline" > "$G/strings/0x409/product"
 	mkdir -p "$G/configs/c.1/strings/0x409"
 	echo "acm" > "$G/configs/c.1/strings/0x409/configuration"
+	echo 500   > "$G/configs/c.1/MaxPower"
 	mkdir -p "$G/functions/acm.usb0"
 	ln -s "$G/functions/acm.usb0" "$G/configs/c.1/"
 	echo "$UDC" > "$G/UDC"

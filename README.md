@@ -90,9 +90,22 @@ tip-ревизии получаются headless. `config/courbet.fragment` ег
 | `boot.img` | v1 | `Image.gz` | приклеен к концу kernel (конвенция postmarketOS, `deviceinfo_header_version="1"`, `append_dtb="true"`) |
 | `boot-stock.img` | v2 | несжатый `Image` | отдельной секцией после ramdisk (как stock Android: `header_size=1660@1644`, `dtb_size@1648`) |
 
-Общие параметры: page 4096, base `0x0`, kernel `0x8000`, ramdisk `0x01000000`,
-tags `0x100`, dtb `0x01f00000`. cmdline `console=tty0 loglevel=8 ignore_loglevel`
-(ABL дописывает его к `chosen/bootargs`, последний `console=` выигрывает → fbcon).
+Общие параметры: page 4096, base `0x0`, kernel `0x8000`, tags `0x100`.
+cmdline `console=tty0 loglevel=8 ignore_loglevel` (ABL дописывает его к
+`chosen/bootargs`, последний `console=` выигрывает → fbcon).
+
+Адреса загрузки **разные**, и это не косметика. У pmOS-раскладки ramdisk стоит на
+`0x01000000` (16 МиБ) — туда влезает сжатый `Image.gz` (13.7 МиБ) с приклеенным
+dtb, зазор 2.19 МиБ. Несжатый `Image` у нас 37.7 МиБ, поэтому в stock-раскладке
+ramdisk и dtb **вычисляются из реальных размеров** секций и выравниваются на
+2 МиБ: при текущих размерах это `0x02600000` и `0x04000000`. Со стоковыми
+`0x01000000`/`0x01f00000` kernel, ramdisk и dtb перекрывались бы все три —
+загрузчик затёр бы сам себя. `scripts/bootinfo.py` печатает карту
+`[addr, addr+size)` каждого образа и **роняет CI**, если секции пересекаются.
+
+Размеры: initramfs 25.3 МиБ, `boot.img` ~39 МиБ, `boot-stock.img` ~63 МиБ.
+Начинать стоит с `boot.img`: он и по конвенции проверенный, и вдвое меньше —
+у загрузчика может не хватить download-буфера на второй.
 
 ## Как запустить сборку
 
@@ -152,6 +165,12 @@ recovery и читать `/sys/fs/pstore/console-ramoops-0`: ramoops переж�
 
 Это ориентир, а не гарантия нашей сборки: **зелёный CI означает только то, что ядро
 собралось и упаковано. Загрузку на телефоне ещё никто не подтверждал.**
+
+Отдельно про WiFi: в `firmware-xiaomi-courbet` лежит только `wlanmdsp.mbn`, а
+`ath10k_snoc` нужны ещё `ath10k/WCN3990/hw1.0/firmware-5.bin` и `board-2.bin` из
+linux-firmware. В наш initramfs они **не кладутся**, так что WiFi в этой сборке не
+поднимется, даже если драйвер инициализируется. Для bring-up это не нужно — шелл
+идёт по USB ACM.
 
 ## Ссылки
 

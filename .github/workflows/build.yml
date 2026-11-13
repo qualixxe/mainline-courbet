@@ -12,9 +12,12 @@ name: build mainline kernel for courbet
 #   boot.img        header v1, Image.gz with the dtb appended to the kernel
 #                   (the postmarketOS convention, deviceinfo header_version=1)
 #   boot-stock.img  header v2, uncompressed Image, dtb in its own section after
-#                   the ramdisk (what the stock Android boot image does:
-#                   header_size=1660 @1644, dtb_size @1648)
+#                   the ramdisk (the stock Android layout: header_size=1660
+#                   @1644, dtb_size @1648). Load offsets are computed from the
+#                   real section sizes, because our Image/initramfs are far
+#                   bigger than stock and would overlap at the stock offsets.
 # Both are meant for `fastboot boot`, which loads into RAM and writes nothing.
+# scripts/bootinfo.py rejects either image if its load sections overlap.
 
 on:
   workflow_dispatch:
@@ -54,7 +57,6 @@ env:
   KERNEL_OFFSET: '0x00008000'
   RAMDISK_OFFSET: '0x01000000'
   TAGS_OFFSET: '0x00000100'
-  DTB_OFFSET: '0x01f00000'
 
 jobs:
   build:
@@ -174,7 +176,17 @@ jobs:
             --tags_offset "$TAGS_OFFSET" \
             -o out/boot.img
 
-          # stock Android convention: uncompressed Image, dtb in its own section.
+          # Stock Android convention: uncompressed Image, dtb in its own section.
+          # Our Image is ~38 MiB and the initramfs ~30 MiB, so the stock offsets
+          # (ramdisk 0x01000000, dtb 0x01f00000) would land inside the kernel.
+          # Derive them from the real sizes instead, each on a 2 MiB boundary.
+          align() { echo $(( ( ($1 + $2 - 1) / $2 ) * $2 )); }
+          KSIZE=$(stat -c%s "$K/Image")
+          RSIZE=$(stat -c%s out/initramfs.cpio.gz)
+          STOCK_RAMDISK=$(align $(( 0x8000 + KSIZE )) 0x200000)
+          STOCK_DTB=$(align $(( STOCK_RAMDISK + RSIZE )) 0x200000)
+          printf 'stock offsets: kernel=0x8000 ramdisk=%#x dtb=%#x\n' \
+            "$STOCK_RAMDISK" "$STOCK_DTB"
           python3 scripts/mkbootimg.py \
             --header_version 2 \
             --kernel "$K/Image" \
@@ -183,9 +195,9 @@ jobs:
             --cmdline "$CMDLINE" \
             --base "$BASE" --pagesize "$PAGESIZE" \
             --kernel_offset "$KERNEL_OFFSET" \
-            --ramdisk_offset "$RAMDISK_OFFSET" \
+            --ramdisk_offset "$(printf '0x%08x' "$STOCK_RAMDISK")" \
             --tags_offset "$TAGS_OFFSET" \
-            --dtb_offset "$DTB_OFFSET" \
+            --dtb_offset "$(printf '0x%08x' "$STOCK_DTB")" \
             -o out/boot-stock.img
 
           echo "--- boot image headers ---"
