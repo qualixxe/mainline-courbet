@@ -28,7 +28,12 @@ mkdir -p "$ROOT/tmp" "$ROOT/run" "$ROOT/config" "$ROOT/lib/firmware"
 if [ -n "$KDIR" ]; then
 	echo "::group::modules"
 	KREL="$(cat "$KDIR/include/config/kernel.release")"
-	make -C "$KDIR" ARCH=arm64 INSTALL_MOD_PATH="$ROOT" INSTALL_MOD_STRIP=1 modules_install
+	# CROSS_COMPILE is required here even though we only install: kbuild sets
+	# STRIP = $(CROSS_COMPILE)strip, and without it INSTALL_MOD_STRIP runs the
+	# host x86 strip over aarch64 .ko files and dies with "Unable to recognise
+	# the format of the input file".
+	make -C "$KDIR" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+		INSTALL_MOD_PATH="$ROOT" INSTALL_MOD_STRIP=1 modules_install
 	depmod -b "$ROOT" -F "$KDIR/System.map" "$KREL"
 	rm -f "$ROOT/lib/modules/$KREL/build" "$ROOT/lib/modules/$KREL/source"
 	echo "installed modules for $KREL"
