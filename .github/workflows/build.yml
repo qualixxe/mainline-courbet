@@ -84,8 +84,8 @@ jobs:
             "https://github.com/$REPO.git" linux
           git -C linux log -1 --format='%H %s' | tee out/kernel-commit.txt
           head -5 linux/Makefile
-          test -f "linux/arch/arm64/boot/dts/qcom/$DTB" || {
-            echo "FATAL: $DTB not present in $REPO @ $REF" >&2
+          test -f "linux/arch/arm64/boot/dts/qcom/${DTB%.dtb}.dts" || {
+            echo "FATAL: ${DTB%.dtb}.dts not present in $REPO @ $REF" >&2
             ls linux/arch/arm64/boot/dts/qcom/ | grep -E 'sm7150|sm6150' >&2 || true
             exit 1
           }
@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           cd linux
           make ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$(nproc)" \
-            Image Image.gz dtbs modules 2>&1 | tee ../out/build.log
+            Image Image.gz "qcom/$DTB" modules 2>&1 | tee ../out/build.log
           echo "--- artifacts ---"
           ls -la arch/arm64/boot/Image arch/arm64/boot/Image.gz
           ls -la "arch/arm64/boot/dts/qcom/$DTB"
