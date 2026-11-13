@@ -97,8 +97,13 @@ jobs:
       - name: Apply courbet fixups
         run: |
           set -euo pipefail
-          DTS="linux/arch/arm64/boot/dts/qcom/$DTB"
-          DTS="${DTS%.dtb}.dts"
+          # The K9A panel driver calls mipi_dsi_dcs_write_seq(), which 6.17
+          # removed from drm_mipi_dsi.h. Without this the whole build dies in
+          # drivers/gpu/drm/panel, which is why the pmOS tip config keeps the
+          # panel disabled.
+          git -C linux apply --verbose \
+            "$PWD/patches/panel-k9a-dcs-write-seq.patch"
+          DTS="linux/arch/arm64/boot/dts/qcom/${DTB%.dtb}.dts"
           cat patches/courbet-usb-peripheral.dtsi >> "$DTS"
           echo "--- tail of $DTS ---"
           tail -12 "$DTS"

@@ -58,18 +58,26 @@ tip-ревизии получаются headless. `config/courbet.fragment` ег
 2. `config/courbet.fragment` — наши оверрайды: панель K9A, fbcon как единственный
    видимый debug-канал, pstore/ramoops, USB ACM gadget, UFS, clocks/pinctrl/interconnect,
    SPI-тач, `IKCONFIG_PROC`, `DYNAMIC_DEBUG`.
-3. `patches/courbet-usb-peripheral.dtsi` — дописывается к board dts: в common dtsi
+3. `patches/panel-k9a-dcs-write-seq.patch` — **без него ветка `courbet_main` вообще
+   не собирается**. Драйвер панели 54 раза вызывает `mipi_dsi_dcs_write_seq()`,
+   а 6.17 этот макрос из `<drm/drm_mipi_dsi.h>` удалил: сборка падает с
+   `implicit declaration of function` в `drivers/gpu/drm/panel`. Патч возвращает
+   макрос локально в драйвер через `mipi_dsi_dcs_write_buffer()` (он на месте и
+   семантика та же, включая early return по ошибке), под `#ifndef` — чтобы тот же
+   патч применялся и к старым деревьям, где макрос ещё есть. Именно поэтому в
+   tip-конфиге pmOS панель выключена: её не чинили, её обошли.
+4. `patches/courbet-usb-peripheral.dtsi` — дописывается к board dts: в common dtsi
    `dr_mode = "otg"` + `usb-role-switch` + `power-role = "source"`, из-за чего порт
    уходит в host и gadget не биндится. Форсируем `peripheral` (тот же приём, что
    upstream использует для curtana).
-4. `initramfs/init` — PID 1 без rootfs: монтирует proc/sys/dev/configfs, поднимает
+5. `initramfs/init` — PID 1 без rootfs: монтирует proc/sys/dev/configfs, поднимает
    **USB ACM gadget** и отдаёт интерактивный shell на `/dev/ttyGS0` (на хосте это
    обычный COM-порт, на Windows не нужны драйверы) и на `tty1` (fbcon на панели).
-5. `scripts/build-initramfs.sh` — Alpine minirootfs 3.21.9 aarch64 + наш init +
+6. `scripts/build-initramfs.sh` — Alpine minirootfs 3.21.9 aarch64 + наш init +
    модули ядра + firmware courbet. Firmware-репо кладёт блобы в
    `qcom/sm7150/courbet/`, а dts просит `qcom/sm7150/xiaomi/courbet/` — делаем оба пути.
    `modem.mbn` (62 MiB) исключён.
-6. `scripts/mkbootimg.py` — вендоренный AOSP mkbootimg.
+7. `scripts/mkbootimg.py` — вендоренный AOSP mkbootimg.
 
 ## Два boot.img, потому что конвенции две
 
