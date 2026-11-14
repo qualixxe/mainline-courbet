@@ -150,7 +150,7 @@ https://github.com/qualixxe/mainline-courbet/releases/download/courbet-screen-fi
 
 ### Готовый экранный тестовый образ
 
-На подключённом `courbet` подтверждён `fastboot boot`-образ:
+На подключённом `courbet` подтверждён `fastboot boot` - образ:
 https://github.com/qualixxe/mainline-courbet/releases/download/courbet-screen-fixed/boot.img
 
 Это локально пропатченный бинарный образ (заплатки дисплейного стека применены
@@ -197,7 +197,7 @@ python scripts/local-boot-edit.py repack work/ boot-pmos.img
 fastboot boot boot-pmos.img
 ```
 
-Готовый `boot-pmos.img` (ядро 6.17 + 패тчи дисплея + Alpine initramfs) собран локально и лежит в `out/boot-pmos.img`. Его можно добавить в релиз `courbet-screen-fixed` как дополнительный ассет.
+Готовый `boot-pmos.img` (ядро 6.17 + патчи дисплея + Alpine initramfs) собран локально и лежит в `out/boot-pmos.img`. Его можно добавить в релиз `courbet-screen-fixed` как дополнительный ассет.
 
 ## Как проверять на телефоне
 
