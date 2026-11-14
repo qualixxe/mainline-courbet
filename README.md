@@ -1,7 +1,8 @@
 # mainline-courbet
 
 Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm **SM7150** /
-Snapdragon 732G). Сборка целиком в GitHub Actions, локально ничего не нужно.
+Snapdragon 732G). Код ядра и конфиги в этом репозитории, собирать можно и локально,
+и через GitHub Actions.
 
 Автор: **@qualixxe096**.
 
@@ -74,11 +75,27 @@ tip-ревизии получаются headless. `config/courbet.fragment` ег
    **USB ACM gadget** и отдаёт интерактивный shell на `/dev/ttyGS0` (на хосте это
    обычный COM-порт, на Windows не нужны драйверы) и на `tty1` (fbcon на панели).
 6. `scripts/build-initramfs.sh` — Alpine minirootfs 3.21.9 aarch64 + наш init +
-   модули ядра + firmware courbet. Firmware-репо кладёт блобы в
-   `qcom/sm7150/courbet/`, а dts просит `qcom/sm7150/xiaomi/courbet/` — делаем оба пути.
-   Исключены `modem.mbn` (62 MiB) и DSP/venus/wlan-блобы (~27 MiB): ramdisk должен
-   влезть под адрес dtb `0x01f00000`.
-7. `scripts/mkbootimg.py` — вендоренный AOSP mkbootimg.
+   шрифт `16x32` + модули ядра + firmware courbet + микрокод Adreno 618 (`a630_sqe.fw`,
+   `a630_gmu.bin`). Firmware-репо кладёт блобы в `qcom/sm7150/courbet/`, а dts просит
+   `qcom/sm7150/xiaomi/courbet/` — делаем оба пути. Исключены `modem.mbn` (62 MiB) и
+   DSP/venus/wlan-блобы (~27 MiB): ramdisk должен влезть под адрес dtb `0x01f00000`.
+7. **Патчи дисплейного стека (`DPU1 + DSI + DSC + K9A`)** — доводят экран до полностью
+   чистой картинки без ошибок FIFO и полос:
+   * `patches/panel-k9a-dsc-topology.patch` — геометрия DSC слайса `1080×12`, `slice_count = 1`,
+     `8 bpp` (вместо ошибочных `10 bpp`), строго под заводской регистр `0x91` панели;
+   * `patches/dpu-dsc-single-slice.patch` — топология `<1 1 1>` (один LM, один DSC, один INTF)
+     вместо принудительного `num_dsc = 2` в mainline;
+   * `patches/panel-k9a-dsi-format-24bit.patch` и `patches/dsi-pclk-bus-width.patch` — согласование
+     ширины шины сжатого потока DPU→DSI (`3 байта/pclk` = 24 бит вместо 30-битного `RGB101010`),
+     переводящее частоты в `pclk = 85.24 МГц`, `byte_clk = 63.93 МГц` и полностью убирающее
+     шторм `FIFO_STATUS = 0x88881310`;
+   * `patches/dsi-dsc-10bpc-8bpp-qp0.patch` — оверрайд `rc_range_params[0].range_max_qp = 8`
+     (вместо `7` из таблицы VESA DSC 1.1 pre-SCR) для `10 bpc @ 8 bpp`, как в стоковом драйвере
+     Qualcomm/Xiaomi и заводском PPS courbet — убирает горизонтальные и боковые DSC-полосы;
+   * `patches/dsi-fifo-status-once.patch` — однократный лог сырого `DSI_FIFO_STATUS` при старте.
+8. `scripts/mkbootimg.py` — вендоренный AOSP mkbootimg.
+9. `scripts/local-boot-edit.py` — локальная распаковка и пересборка `boot.img` за ~1 секунду
+   на Windows/Linux без пересборки ядра в GitHub Actions.
 
 ## Упаковка: конвенция снята с самого телефона
 
@@ -106,11 +123,6 @@ initramfs с DSP-блобами — 25.3 МиБ и не влезает, поэт
 CI делает два образа, оба под `fastboot boot` — **загрузка в RAM, ничего не
 прошивается**:
 
-| файл | header | kernel | dtb | статус |
-|---|---|---|---|---|
-| `boot.img` | v2 | `Image.gz` | отдельной секцией | **основной**, один в один как stock |
-| `boot-pmos.img` | v1 | `Image.gz` | приклеен к концу kernel | конвенция postmarketOS; ABL принимает, но не загрузилось |
-
 cmdline `console=tty0 loglevel=8 ignore_loglevel` (ABL дописывает его к
 `chosen/bootargs`, последний `console=` выигрывает → fbcon).
 
@@ -128,14 +140,38 @@ dtb      0x01f00000 .. 0x01f15bcc  (89036)
 ## Как запустить сборку
 
 ```bash
+# GitHub Actions (опционально, параметризуется через inputs)
 gh workflow run build.yml -R qualixxe/mainline-courbet
 gh run watch -R qualixxe/mainline-courbet
+
+# Или локально на Windows/Linux: см. «Локальная правка boot.img» ниже
 ```
 
-Inputs: `kernel_repo`, `kernel_ref` (например `sm7150-mainline/linux` + `v6.13.4` как
-fallback), `with_firmware`, `cmdline`. Результат — GitHub Release с `boot.img`,
-`boot-pmos.img`, `initramfs.cpio.gz`, `Image.gz`, dtb, `config`, `MANIFEST.txt`,
-`SHA256SUMS.txt`, `build.log`.
+### Готовый экранный тестовый образ
+
+На подключённом `courbet` подтверждён `fastboot boot`-образ:
+https://github.com/qualixxe/mainline-courbet/releases/latest/download/boot.img
+
+Это локально пропатченный бинарный образ (заплатки дисплейного стека применены
+в исходниках репозитория). Используй только `fastboot boot` — не прошивай разделы.
+Альтернативный `boot-pmos.img` перепакован для проверки, но не проверен на телефоне.
+
+## Локальная правка `boot.img` без GitHub Actions
+
+Чтобы менять `initramfs` (`init`, шрифты, модули, блобы), `cmdline`, `device.dtb` или
+тестировать бинарные патчи ядра прямо на ПК за ~1 секунду без 20-минутного ожидания CI:
+
+```bash
+# Распаковать готовый boot.img (достаёт Image, device.dtb, boot-meta.json и initramfs/)
+python scripts/local-boot-edit.py unpack boot.img work/
+
+# Отредактировать нужные файлы в work/initramfs/, cmdline в work/boot-meta.json,
+# DTB в work/device.dtb или ядро в work/Image, затем собрать обратно:
+python scripts/local-boot-edit.py repack work/ boot-test.img
+
+# Проверить в RAM без прошивки раздела
+fastboot boot boot-test.img
+```
 
 ## Как проверять на телефоне
 
@@ -202,47 +238,48 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 
 Работает:
 
+* **Экран (AMOLED K9A `36_02_0a`, 1080×2400, DSC 10bpc/8bpp, cmd-mode)** — чистая картинка
+  без артефактов и полос, **0 ошибок DSI FIFO**, консоль `fbcon` со шрифтом `16×32`,
+  регулировка яркости через `/sys/class/backlight/ae94000.dsi.0/brightness` (`0..2047`)
+* **GPU Adreno 618** — микрокод `qcom/a630_sqe.fw` и `qcom/a630_gmu.bin` подхватываются,
+  DRM/MSM (`ae01000.display-controller`) инициализируется штатно
 * 8 CPU, 5475 МиБ RAM, UFS — видны все разделы
 * USB gadget + ACM shell (`/dev/ttyGS0`)
-* DRM/DPU зарегистрирован, панель K9A привязана на 1080x2400, подсветка включена
-* ramoops/pstore, debugfs, fbdev emulation (fb0 32 bpp, stride 4352)
+* ramoops/pstore, debugfs, fbdev emulation (`fb0` 32 bpp, stride 4352)
 
-Не работает:
+Не работает / пока вне initramfs:
 
-* **Экран чёрный.** Панель инициализируется без единой ошибки, DSI PLL на
-  рантайме залочен (бит `PLL_UNLOCKED` в `dsi_err_worker` не выставлен), но DSI
-  сыплет FIFO underflow (`status=4`), а DPU — `wait_for_idle ... ret:-110` и
-  `enc33 frame done timeout` каждые ~88 мс. Корень найден сравнением с
-  downstream-ядром courbet (`Aciss21/kernel_xiaomi_sm6150`, ветка `aosp`,
-  4.14.357-openela): заводская панель
-  `dsi-panel-k9a-36-02-0a-mp-dsc-cmd.dtsi` объявляет **один** DSC-слайс
-  шириной 1080 при **8 bpp**, а топология в dtbo — `<1 1 1>`, то есть один
-  LM, один DSC, один INTF. Mainline же всегда резервирует **два** DSC-блока
-  (`dpu_encoder_update_topology`, условие `catalog->dsc_count >= 2`; у SM7150
-  их два) и делит строку пополам — `enc_ip_w = intf_ip_w / num_dsc` в
-  `dpu_encoder_prep_dsc`, — тогда как `dpu_hw_dsc_config` пишет `slice_width`
-  в `DSC_SLICE` без деления. Панель при этом получает PPS из `prepare()`, а её
-  вендорный регистр DSC `0x91` прошит заводским payload'ом на один слайс
-  1080 — переписать его нельзя, кодировка полей неизвестна. Значит подгонять
-  надо DPU, а не панель. Два патча:
-  * `panel-k9a-dsc-topology.patch` — 1080 / 1 слайс / **8 bpp** (было 10);
-  * `dpu-dsc-single-slice.patch` — при `slice_count == 1` DPU берёт один
-    DSC-блок; `dpu_crtc_get_topology` тогда даёт `num_lm = 1`
-    (`1080 > MAX_HDISPLAY_SPLIT` ложно), то есть ровно заводские 1:1:1.
-
-  Первая попытка шла в обратную сторону (540 / 2 слайса, как в
-  `panel-visionox-r66451.c`) — **проверено на телефоне, поток ошибок не
-  прекратился**: DPU и DSI соглашались друг с другом, но панель нет.
-* **GPU.** Adreno 618 грузит микрокод SQE из `qcom/a630_sqe.fw`, которого нет в
-  репозитории блобов courbet. Добавлен из linux-firmware, на телефоне
-  подтверждено: `loaded qcom/a630_sqe.fw from new location`. Следом не хватало
-  `qcom/a630_gmu.bin` (`-2`) — добавлен тоже.
 * **WiFi.** В `firmware-xiaomi-courbet` лежит только `wlanmdsp.mbn`, а
   `ath10k_snoc` нужны ещё `ath10k/WCN3990/hw1.0/firmware-5.bin` и `board-2.bin`
-  из linux-firmware. В initramfs они не кладутся, так что WiFi не поднимется,
-  даже если драйвер инициализируется. Для bring-up это не нужно — шелл идёт по
-  USB ACM.
-* **Touch, audio, camera, GPS, sensors** — драйверов в mainline нет.
+  из linux-firmware. В initramfs они не кладутся, чтобы уложиться в лимит `< 15 МиБ`
+  до адреса DTB `0x01f00000`.
+* **Touch, audio, camera, GPS, sensors** — драйверов (в т.ч. `xiaomi,spits` на SPI) в mainline нет.
+
+### Как был починен экран (3 независимых бага в mainline)
+
+1. **Топология DSC `1:1:1` и слайс `1080×12 @ 8 bpp`.** Заводская панель
+   `dsi-panel-k9a-36-02-0a-mp-dsc-cmd.dtsi` и дамп `dtbo` объявляют **один** DSC-слайс
+   шириной 1080 при **8 bpp** (`qcom,display-topology = <1 1 1>`), а вендорный регистр
+   `0x91` панели жёстко прошит под один слайс 1080. Mainline же резервировал 2 DSC-блока
+   и делил ширину пополам, а в драйвере панели стояло `10 bpp`. Исправлено патчами
+   `panel-k9a-dsc-topology.patch` и `dpu-dsc-single-slice.patch`.
+2. **Шторм `FIFO_STATUS = 0x88881310` (рассинхрон 30 бит vs 24 бит на шине DPU→DSI).**
+   После перехода на `1:1:1` DSI сыпал ~18.5 тыс. прерываний/сек: `CMD_MDP_FIFO_OVERFLOW` +
+   `DLN0..DLN3 HS FIFO UNDERFLOW`. Причина: при включённом DSC блок DPU отдаёт сжатые байты
+   в DSI по **3 байта за такт `pclk`** (24 бита), независимо от `bits_per_component = 10`.
+   Из-за `MIPI_DSI_FMT_RGB101010` (30 бит) и деления на `bits_per_component * 3` в
+   `dsi_adjust_pclk_for_compression()` пиксельный клок занижался на 25% (`69.58 МГц`), а
+   `byte_clk` разгонялся выше скорости подкачки от DPU. Перевод формата шины в 24 бит и
+   расчёт `pclk` от реальной ширины шины выставили `pclk = 85.24 МГц`, `byte_clk = 63.93 МГц` —
+   ошибки FIFO исчезли полностью (`0` ошибок).
+3. **Горизонтальные/боковые полосы вокруг текста (`range_max_qp[0]: 7 → 8`).**
+   Стандартная таблица VESA DSC 1.1 pre-SCR в `drm_dsc_helper.c` задаёт для `10 bpc @ 8 bpp`
+   значение `rc_range_params[0].range_max_qp = 7`. В downstream-драйвере Qualcomm/Xiaomi
+   (`dsi_panel.c`) и заводском PPS панели K9A нулевой диапазон переопределён в **`8`**
+   (регистр `dsc_0 + 0xb0 = 0x8`). При `7` на плоских однотонных участках (фон консоли рядом
+   с глифами) возникали полосы переполнения/квантования DSC. Патч
+   `dsi-dsc-10bpc-8bpp-qp0.patch` синхронизирует и PPS панели, и `DSC_RANGE_MAX_QP_0` в DPU1
+   со значением `8` — полосы полностью пропали.
 
 ### Что решило загрузку
 
@@ -258,45 +295,11 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 только на бит `MIPI_DSI_MODE_VIDEO`), отсутствие PMIC-регуляторов, автогашение
 консоли (`consoleblank=0`), патч dcs_write_seq, сбой инициализации панели.
 
-Проверено замерами на живом телефоне (релиз 9):
-
-* **DSI PLL на рантайме исправен.** `clk_summary`: `dsi0vco_clk` 1043710693 Гц,
-  `dsi0_pll_bit_clk` 521855347, `dsi0_phy_pll_out_byteclk` 65231918,
-  `dispcc_mdss_pclk0_clk` 69580713 — все enable=Y. Ошибка
-  `DSI PLL(0) lock failed, status=0x00000000` на probe — артефакт
-  `clk_core_reparent_orphans_nolock` до включения PHY, не корень.
-* **TE замuxен верно**: `pin 10 (GPIO_10): device ae94000.dsi.0 function
-  mdp_vsync`.
-* **Прерывания**: `dsi_isr` 5 566 665 за 5 минут (~18.5 тыс/сек), MDP 7702.
-  Ошибка DSI непрерывная, а не раз в кадр — то есть условие в железе
-  персистентное, а не привязано к передаче кадра.
-* Заводской dtbo: `qcom,display-topology = <1 1 1>` (один LM/DSC/INTF),
-  `qcom,mdss-dsi-panel-clockrate = <652000000>`; в dtsi downstream — 682000000.
-  Расхождение с нашими 522 МГц объяснено: downstream берёт bit clk **прямо из
-  DT** (`dsi_display.c`, `dsi_display_update_dsi_bitrate(display,
-  mode->timing.clk_rate_hz)`), а mainline **вычисляет** его из таймингов и bpp
-  (`dsi_adjust_pclk_for_compression` → `dsi_byte_clk_get_rate`). Полосы при
-  522 МГц хватает: DPU отдаёт `pclk × 3` = 208.7 МБ/с, DSI забирает
-  `byte_clk × 4 lanes` = 260.9 МБ/с, панели нужно 1080 × 2400 × 60 =
-  155.5 МБ/с. Так что это не корень, а следствие другой формулы.
-* Widebus отброшен: `msm_dsi_host_is_wide_bus_enabled()` и
-  `dpu_encoder_is_widebus_enabled()` — один и тот же источник, DPU и DSI
-  выбирают 3 или 6 байт на pclk согласованно.
-* **Регистр `0x91` панели расшифрован — это и есть доказательство.** Заводской
-  payload `AB 28 00 0C C2 00 03 1C 01 7E 00 0F 08 BB 04 3D 10 F0` содержит
-  PPS3 (`0xAB` = `(10 bpc << 4) | line_buf_depth 11`) и шесть RC-параметров
-  DSC 1.1 pre-SCR: `0x031C`=796 `initial_dec_delay`, `0x017E`=382
-  `scale_increment_interval`, `0x000F`=15 `scale_decrement_interval`,
-  `0x08BB`=2235 `nfl_bpg_offset`, `0x043D`=1085 `slice_bpg_offset`,
-  `0x10F0`=4336 `final_offset`. Все шесть независимо пересчитаны по формулам
-  `dsi_dsc_populate_static_param` (downstream) и `drm_dsc_compute_rc_parameters`
-  (mainline) для **1080×12, 8 bpp, 10 bpc** — совпадают байт в байт, включая
-  `initial_xmit_delay=512`, `initial_offset=6144`, `first_line_bpg_offset=12`,
-  `min/max_qp=7/16`, `quant_incr_limit=15`, `chunk_size=1080`.
-  Для слайса **540** те же формулы дают `initial_dec_delay=526`,
-  `slice_bpg_offset=2170`, `scale_decrement_interval=7` — то есть прошлый
-  патч 540/2 гарантированно ломал декодер панели. Переписать `0x91` нельзя,
-  поэтому единственная согласованная конфигурация — 1080/1/8 bpp и один DSC.
+**Повторно проверено на подключённом Xiaomi Mi 11 Lite 4G:** образ загружен через
+`fastboot boot` (без прошивки раздела). Панель показывает текст на синем фоне;
+после оверрайда `range_max_qp[0] = 8` пользователь подтвердил, что полосы исчезли.
+В serial-shell подтверждены `pclk = 85.24 МГц`, `byte_clk = 63.93 МГц`, включённая
+подсветка и отсутствие прежнего шторма FIFO.
 
 ## Ссылки
 
