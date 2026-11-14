@@ -73,6 +73,16 @@ if [ -n "$FWDIR" ]; then
 	echo "::endgroup::"
 fi
 
+# Adreno 618 loads its SQE microcode from qcom/a630_sqe.fw, which lives in
+# linux-firmware rather than the courbet blob repo. Without it adreno_request_fw
+# fails with -2 and the GPU never initialises.
+echo "::group::gpu firmware"
+mkdir -p "$ROOT/lib/firmware/qcom"
+curl -fsSL --retry 3 -o "$ROOT/lib/firmware/qcom/a630_sqe.fw" \
+	"https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/qcom/a630_sqe.fw"
+ls -la "$ROOT/lib/firmware/qcom/a630_sqe.fw"
+echo "::endgroup::"
+
 echo "::group::pack"
 mkdir -p "$(dirname "$OUT")"
 ( cd "$ROOT" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9 ) > "$OUT"
