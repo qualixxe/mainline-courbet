@@ -14,7 +14,7 @@ Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm *
 
 ## Что такое mainline и зачем он тут
 
-Стоковое ядро courbet — это **downstream**: CAF-форк Linux **4.14** с вендорными патчами Xiaomi/Qualcomm, которое живёт только в Android-дереве (`MiCode/Xiaomi_Kernel_OpenSource`, ветка `courbet-r-oss`, платформа называется `sdmmagpie`, msm-id 365). Оно не обновляется, не переносится на новые версии и тянет за собой весь Android-стек.
+Стоковое ядро courbet — это **downstream**: CAF-форк Linux **4.14** с вендорными патчами Xiaomi/Qualcomm, которое живёт только в Android-дереве (`MiCode/Xiaomi_Kernel_OpenSource`, ветка `courbet-r-oss`, платформа называется `sdmmagpie`, msm-id 365). Он�� не обновляется, не переносится на новые версии и тянет за собой весь Android-стек.
 
 **Mainline** — это ядро с kernel.org, то же самое, что работает на серверах и десктопах: свежие версии, нормальные драйверы, никакой привязки к Android. Для телефона это даёт postmarketOS, обычный Linux userspace, регулярные обновления и возможность чинить железо самому.
 
@@ -47,7 +47,7 @@ Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm *
 1. `config/base.config` — вендоренный pmOS-конфиг sm7150 (8736 строк), чтобы сборка не зависела от доступности gitlab.
 2. `config/courbet.fragment` — наши оверрайды: панель K9A, fbcon как единственный видимый debug-канал, pstore/ramoops, USB ACM gadget, UFS, clocks/pinctrl/interconnect, SPI-тач, `IKCONFIG_PROC`, `DYNAMIC_DEBUG`.
 3. `patches/panel-k9a-dcs-write-seq.patch` — **без него ветка `courbet_main` вообще не собирается**. Драйвер панели 54 раза вызывает `mipi_dsi_dcs_write_seq()`, а 6.17 этот макрос из `<drm/drm_mipi_dsi.h>` удалил: сборка падает с `implicit declaration of function` в `drivers/gpu/drm/panel`.
-4. `patches/courbet-usb-peripheral.dtsi` — дописывае��ся к board dts: в common dtsi `dr_mode = "otg"` + `usb-role-switch` + `power-role = "source"`, из-за чего порт уходит в host и gadget не биндится. Форсируем `peripheral`.
+4. `patches/courbet-usb-peripheral.dtsi` — дописывается к board dts: в common dtsi `dr_mode = "otg"` + `usb-role-switch` + `power-role = "source"`, из-за чего порт уходит в host и gadget не биндится. Форсируем `peripheral`.
 5. `initramfs/init` — PID 1 без rootfs: монтирует proc/sys/dev/configfs, поднимает **USB ACM gadget** и отдаёт интерактивный shell на `/dev/ttyGS0` и `tty1`.
 6. `scripts/build-initramfs.sh` — Alpine minirootfs 3.21.9 aarch64 + наш init + шрифт `16x32` + модули ядра + firmware courbet + микрокод Adreno 618.
 7. **Патчи дисплейного стека (`DPU1 + DSI + DSC + K9A`)** — доводят экран до чистой картинки без ошибок FIFO и полос.
@@ -101,7 +101,7 @@ fastboot boot boot-test.img
 
 </details>
 
-<details id="en">
+<details id="en" open>
 <summary><strong>English</strong></summary>
 
 # mainline-courbet
