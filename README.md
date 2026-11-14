@@ -282,6 +282,21 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 * Widebus отброшен: `msm_dsi_host_is_wide_bus_enabled()` и
   `dpu_encoder_is_widebus_enabled()` — один и тот же источник, DPU и DSI
   выбирают 3 или 6 байт на pclk согласованно.
+* **Регистр `0x91` панели расшифрован — это и есть доказательство.** Заводской
+  payload `AB 28 00 0C C2 00 03 1C 01 7E 00 0F 08 BB 04 3D 10 F0` содержит
+  PPS3 (`0xAB` = `(10 bpc << 4) | line_buf_depth 11`) и шесть RC-параметров
+  DSC 1.1 pre-SCR: `0x031C`=796 `initial_dec_delay`, `0x017E`=382
+  `scale_increment_interval`, `0x000F`=15 `scale_decrement_interval`,
+  `0x08BB`=2235 `nfl_bpg_offset`, `0x043D`=1085 `slice_bpg_offset`,
+  `0x10F0`=4336 `final_offset`. Все шесть независимо пересчитаны по формулам
+  `dsi_dsc_populate_static_param` (downstream) и `drm_dsc_compute_rc_parameters`
+  (mainline) для **1080×12, 8 bpp, 10 bpc** — совпадают байт в байт, включая
+  `initial_xmit_delay=512`, `initial_offset=6144`, `first_line_bpg_offset=12`,
+  `min/max_qp=7/16`, `quant_incr_limit=15`, `chunk_size=1080`.
+  Для слайса **540** те же формулы дают `initial_dec_delay=526`,
+  `slice_bpg_offset=2170`, `scale_decrement_interval=7` — то есть прошлый
+  патч 540/2 гарантированно ломал декодер панели. Переписать `0x91` нельзя,
+  поэтому единственная согласованная конфигурация — 1080/1/8 bpp и один DSC.
 
 ## Ссылки
 
