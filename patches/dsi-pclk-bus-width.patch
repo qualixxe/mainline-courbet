@@ -1,0 +1,134 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dsi: derive the compressed pclk from the DPU bus width
+
+dsi_adjust_pclk_for_compression() scaled hdisplay by
+compressed_bpp / (bits_per_component * 3), while dsi_timing_setup()
+programs the DSI with compressed_bytes_per_line / bytes_per_pclk, where
+bytes_per_pclk is 3 (6 with widebus). On a 10 bpc panel the two disagree
+by 30/24: the pixel clock came out 25% low, and because
+dsi_byte_clk_get_rate() scales that same pclk by the DSI format bpp, the
+byte clock ended up 25% above the rate at which the DPU actually feeds
+the link.
+
+On courbet (K9A panel, 10 bpc, DSC 8 bpp, four lanes) that showed up as
+FIFO_STATUS = 0x88881310: CMD_MDP_FIFO_OVERFLOW plus HS FIFO underflow
+on DLN0..DLN3, a ~714/s dsi_err_worker flood, and a panel that only
+flickered instead of showing a frame.
+
+Compute new_hdisplay from msm_dsc_get_bytes_per_line() and the real bus
+width so the clock and the timing engine agree, and share one helper for
+the bus width instead of open-coding it in dsi_timing_setup().
+
+For 1080x2400@60, 8 bpp, 10 bpc this moves pclk 69.58 -> 85.24 MHz and
+byte clk 65.23 -> 63.93 MHz, which matches the 255.7 MB/s the DPU
+supplies and stays inside the 4.6 us line time.
+---
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -565,14 +565,32 @@
+ 	clk_disable_unprepare(msm_host->byte_clk);
+ }
+ 
++/*
++ * The DPU hands compressed bytes to the DSI three at a time (six with
++ * widebus), no matter how many bits per component the panel uses. The
++ * pixel clock and the timing engine must both divide by that bus width:
++ * deriving them from bits_per_component instead makes the DSI drain its
++ * lane FIFOs faster than the DPU refills them, and every lane reports
++ * HS FIFO underflow.
++ */
++static u32 dsi_bytes_per_pclk(struct msm_dsi_host *msm_host)
++{
++	if (msm_dsi_host_is_wide_bus_enabled(&msm_host->base) &&
++	    !(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
++		return 6;
++
++	return 3;
++}
++
+ /**
+  * dsi_adjust_pclk_for_compression() - Adjust the pclk rate for compression case
+  * @mode: The selected mode for the DSI output
+  * @dsc: DRM DSC configuration for this DSI output
++ * @bytes_per_pclk: bytes the DPU transfers to the DSI per pixel clock
+  *
+  * Adjust the pclk rate by calculating a new hdisplay proportional to
+  * the compression ratio such that:
+- *     new_hdisplay = old_hdisplay * compressed_bpp / uncompressed_bpp
++ *     new_hdisplay = compressed_bytes_per_line / bytes_per_pclk
+  *
+  * Porches do not need to be adjusted:
+  * - For VIDEO mode they are not compressed by DSC and are passed as is.
+@@ -585,10 +603,10 @@
+  *  transfer time and data overhead as a starting point of the calculations.
+  */
+ static unsigned long dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
+-		const struct drm_dsc_config *dsc)
+-{
+-	int new_hdisplay = DIV_ROUND_UP(mode->hdisplay * drm_dsc_get_bpp_int(dsc),
+-			dsc->bits_per_component * 3);
++		const struct drm_dsc_config *dsc, u32 bytes_per_pclk)
++{
++	int new_hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(dsc),
++			bytes_per_pclk);
+ 
+ 	int new_htotal = mode->htotal - mode->hdisplay + new_hdisplay;
+ 
+@@ -596,14 +614,15 @@
+ }
+ 
+ static unsigned long dsi_get_pclk_rate(const struct drm_display_mode *mode,
+-		const struct drm_dsc_config *dsc, bool is_bonded_dsi)
++		const struct drm_dsc_config *dsc, bool is_bonded_dsi,
++		u32 bytes_per_pclk)
+ {
+ 	unsigned long pclk_rate;
+ 
+ 	pclk_rate = mode->clock * 1000u;
+ 
+ 	if (dsc)
+-		pclk_rate = dsi_adjust_pclk_for_compression(mode, dsc);
++		pclk_rate = dsi_adjust_pclk_for_compression(mode, dsc, bytes_per_pclk);
+ 
+ 	/*
+ 	 * For bonded DSI mode, the current DRM mode has the complete width of the
+@@ -623,7 +642,8 @@
+ 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+ 	u8 lanes = msm_host->lanes;
+ 	u32 bpp = mipi_dsi_pixel_format_to_bpp(msm_host->format);
+-	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, is_bonded_dsi);
++	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, is_bonded_dsi,
++				dsi_bytes_per_pclk(msm_host));
+ 	unsigned long pclk_bpp;
+ 
+ 	if (lanes == 0) {
+@@ -642,7 +662,8 @@
+ 
+ static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ {
+-	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc, is_bonded_dsi);
++	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc,
++				is_bonded_dsi, dsi_bytes_per_pclk(msm_host));
+ 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
+ 							msm_host->mode);
+ 
+@@ -972,7 +993,6 @@
+ 	u32 hdisplay = mode->hdisplay;
+ 	u32 wc;
+ 	int ret;
+-	bool wide_bus_enabled = msm_dsi_host_is_wide_bus_enabled(&msm_host->base);
+ 
+ 	DBG("");
+ 
+@@ -1027,10 +1047,7 @@
+ 		 * unused anyway.
+ 		 */
+ 		h_total -= hdisplay;
+-		if (wide_bus_enabled && !(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO))
+-			bytes_per_pclk = 6;
+-		else
+-			bytes_per_pclk = 3;
++		bytes_per_pclk = dsi_bytes_per_pclk(msm_host);
+ 
+ 		hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(msm_host->dsc), bytes_per_pclk);
+ 

@@ -1,8 +1,7 @@
 # mainline-courbet
 
 Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm **SM7150** /
-Snapdragon 732G). Код ядра и конфиги в этом репозитории, собирать можно и локально,
-и через GitHub Actions.
+Snapdragon 732G). Код ядра и конфиги в этом репозитории — собирать только локально.
 
 Автор: **@qualixxe096**.
 
@@ -137,15 +136,17 @@ dtb      0x01f00000 .. 0x01f15bcc  (89036)
 
 Размеры: initramfs 11.6 МиБ, `boot.img` 25.4 МиБ.
 
-## Как запустить сборку
+## Как запустить на телефоне
+
+Ничего не прошиваем — только временная загрузка в RAM:
 
 ```bash
-# GitHub Actions (опционально, параметризуется через inputs)
-gh workflow run build.yml -R qualixxe/mainline-courbet
-gh run watch -R qualixxe/mainline-courbet
-
-# Или локально на Windows/Linux: см. «Локальная правка boot.img» ниже
+adb reboot bootloader
+fastboot boot boot.img
 ```
+
+Готовый проверенный `boot.img`:
+https://github.com/qualixxe/mainline-courbet/releases/download/courbet-screen-fixed/boot.img
 
 ### Готовый экранный тестовый образ
 

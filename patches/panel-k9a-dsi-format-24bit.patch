@@ -1,0 +1,35 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/panel: k9a: use a 24 bit DSI host format for DSC
+
+The K9A panel is 10 bpc, but it is driven through DSC: the DPU compresses
+a line to slice_chunk_size bytes and hands them to the DSI three bytes
+per pixel clock. Announcing MIPI_DSI_FMT_RGB101010 makes
+dsi_byte_clk_get_rate() use 30 bpp, so the byte clock runs 25% above the
+rate the DPU can sustain.
+
+Measured on courbet: FIFO_STATUS = 0x88881310 (CMD_MDP_FIFO_OVERFLOW and
+HS FIFO underflow on DLN0..DLN3), dsi_err_worker firing ~714 times a
+second, and a screen that flickered yellow instead of showing a frame.
+
+Every other DSC panel in mainline uses MIPI_DSI_FMT_RGB888 for the same
+reason. The panel's own colour depth is carried by the DSC PPS
+(bits_per_component = 10), not by the DSI host format.
+---
+--- a/drivers/gpu/drm/panel/panel-k9a-36-02-0a-mp-dsc.c
++++ b/drivers/gpu/drm/panel/panel-k9a-36-02-0a-mp-dsc.c
+@@ -318,7 +318,14 @@
+ 	mipi_dsi_set_drvdata(dsi, ctx);
+ 
+ 	dsi->lanes = 4;
+-	dsi->format = MIPI_DSI_FMT_RGB101010;
++	/*
++	 * With DSC the payload is compressed bytes, so the host format has
++	 * to describe the DPU->DSI bus (3 bytes per pclk), not the panel's
++	 * 10 bit components. RGB101010 makes dsi_byte_clk_get_rate() scale
++	 * pclk by 30/32 instead of 24/32, the DSI drains 25% faster than
++	 * the DPU supplies, and all four lanes report HS FIFO underflow.
++	 */
++	dsi->format = MIPI_DSI_FMT_RGB888;
+ 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST |
+ 			  MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM;
+ 

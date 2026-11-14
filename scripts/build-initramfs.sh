@@ -36,6 +36,10 @@ tar xzf /tmp/alpine-minirootfs.tar.gz -C "$ROOT"
 echo "::endgroup::"
 
 install -m 0755 "$HERE/initramfs/init" "$ROOT/init"
+if [ -f "$HERE/initramfs/usr/share/consolefonts/font16x32.psf" ]; then
+	install -D -m 0644 "$HERE/initramfs/usr/share/consolefonts/font16x32.psf" \
+		"$ROOT/usr/share/consolefonts/font16x32.psf"
+fi
 mkdir -p "$ROOT/tmp" "$ROOT/run" "$ROOT/config" "$ROOT/lib/firmware"
 
 if [ -n "$KDIR" ]; then

@@ -1,0 +1,25 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dsi: set DSC range_max_qp[0]=8 for 10bpc/8bpp panels
+
+VESA DSC 1.1 pre-SCR table sets rc_range_params[0].range_max_qp = 7 for
+10 bpc @ 8 bpp, whereas Qualcomm's downstream SDM/SM7150 DSI driver and
+Xiaomi's courbet K9A (36-02-0a) panel PPS override range_max_qp[0] to 8.
+With 7, flat regions (such as solid console background rows) under-quantize
+in range 0 and produce horizontal/right-edge DSC artifacts on K9A.
+
+Override rc_range_params[0].range_max_qp to 8 in dsi_populate_dsc_params()
+for 10 bpc / 8 bpp before computing RC parameters, keeping both the panel
+PPS payload and DPU1 DSC_RANGE_MAX_QP_0 register in sync.
+---
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -1851,6 +1851,9 @@
+ 		return ret;
+ 	}
+ 
++	if (dsc->bits_per_component == 10 && drm_dsc_get_bpp_int(dsc) == 8)
++		dsc->rc_range_params[0].range_max_qp = 8;
++
+ 	dsc->initial_scale_value = drm_dsc_initial_scale_value(dsc);
+ 	dsc->line_buf_depth = dsc->bits_per_component + 1;
+ 

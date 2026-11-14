@@ -19,6 +19,13 @@ mount -t tmpfs  tmpfs  /run
 # DRM register dumps and dynamic_debug only exist under debugfs.
 mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
 
+# Disable software fbcon cursor blink (avoids sys_imageblit warning on DRM fb)
+# and load large 16x32 console font if bundled in initramfs.
+echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
+if [ -f /usr/share/consolefonts/font16x32.psf ]; then
+	setfont /usr/share/consolefonts/font16x32.psf -C /dev/tty1 2>/dev/null
+fi
+
 dmesg > /tmp/dmesg.txt 2>/dev/null
 
 # ramoops lives at 9d800000; without this mount the records from the previous
