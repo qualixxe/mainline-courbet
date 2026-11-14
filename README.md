@@ -223,9 +223,13 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
   а не 10, и PPS из `prepare()` наследует эту ошибку. Исправлено патчем
   `panel-k9a-dsc-topology.patch`: 540 / 2 слайса / 8 bpp — ровно как в
   `panel-visionox-r66451.c`, которая водит 1080p-панель на том же SM7150.
+  **Проверено на телефоне: поток ошибок не прекратился.** Конфигурация DSC
+  теперь самосогласована и совпадает с рабочей панелью того же SoC, так что
+  правка оставлена, но корень чёрного экрана — не только в ней.
 * **GPU.** Adreno 618 грузит микрокод SQE из `qcom/a630_sqe.fw`, которого нет в
-  репозитории блобов courbet — без него `adreno_request_fw` падает с `-2`.
-  Файл добавлен в initramfs из linux-firmware.
+  репозитории блобов courbet. Добавлен из linux-firmware, на телефоне
+  подтверждено: `loaded qcom/a630_sqe.fw from new location`. Следом не хватало
+  `qcom/a630_gmu.bin` (`-2`) — добавлен тоже.
 * **WiFi.** В `firmware-xiaomi-courbet` лежит только `wlanmdsp.mbn`, а
   `ath10k_snoc` нужны ещё `ath10k/WCN3990/hw1.0/firmware-5.bin` и `board-2.bin`
   из linux-firmware. В initramfs они не кладутся, так что WiFi не поднимется,
@@ -244,8 +248,25 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 Отброшенные по пути гипотезы, чтобы не проверять их дважды: перекрытие секций
 (карта чистая), «16K pages» (`flags=0xa` и у stock тоже, `ARM64_4K_PAGES=y`),
 анти-rollback по `os_version`, рассинхрон video/cmd-режима (msm host смотрит
-только на бит `MIPI_DSI_MODE_VIDEO`), отсутствие PMIC-регуляторов и TE
-(всё на месте), автогашение консоли (`consoleblank=0`).
+только на бит `MIPI_DSI_MODE_VIDEO`), отсутствие PMIC-регуляторов, автогашение
+консоли (`consoleblank=0`), патч dcs_write_seq, сбой инициализации панели.
+
+Проверено замерами на живом телефоне (релиз 9):
+
+* **DSI PLL на рантайме исправен.** `clk_summary`: `dsi0vco_clk` 1043710693 Гц,
+  `dsi0_pll_bit_clk` 521855347, `dsi0_phy_pll_out_byteclk` 65231918,
+  `dispcc_mdss_pclk0_clk` 69580713 — все enable=Y. Ошибка
+  `DSI PLL(0) lock failed, status=0x00000000` на probe — артефакт
+  `clk_core_reparent_orphans_nolock` до включения PHY, не корень.
+* **TE замuxен верно**: `pin 10 (GPIO_10): device ae94000.dsi.0 function
+  mdp_vsync`.
+* **Прерывания**: `dsi_isr` 5 566 665 за 5 минут (~18.5 тыс/сек), MDP 7702.
+  Ошибка DSI непрерывная, а не раз в кадр — то есть условие в железе
+  персистентное, а не привязано к передаче кадра.
+* Заводской dtbo: `qcom,display-topology = <1 1 1>` (один LM/DSC/INTF),
+  `qcom,mdss-dsi-panel-clockrate = <652000000>`. Mainline принудительно берёт
+  два DSC, а bit clk получается 522 МГц против заводских 652 — расхождение
+  замечено, причина не установлена.
 
 ## Ссылки
 
