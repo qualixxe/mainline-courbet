@@ -174,6 +174,31 @@ python scripts/local-boot-edit.py repack work/ boot-test.img
 fastboot boot boot-test.img
 ```
 
+## Интеграция с postmarketOS (`pmos-courbet`)
+
+В репо [qualixxe/pmos-courbet](https://github.com/qualixxe/pmos-courbet) лежит порт устройства courbet для postmarketOS: `device/courbet.deviceinfo`, `mkbootimg.py` (header v0, как требует courbet bootloader) и GitHub Workflow для сборки pmOS-образа.
+
+Образ из этого репо собирает ядро 6.13.4. Если хочешь ядро 6.17 с уже исправленным экраном (все патчи дисплея из этого репо), собери гибридный `boot.img` локально:
+
+```bash
+# 1. Распаковать любой рабочий boot.img (например, из релиза courbet-screen-fixed)
+python scripts/local-boot-edit.py unpack boot.img work/
+
+# 2. Скопировать файлы из pmos-courbet (deviceinfo, init-скрипты и т.д.) в work/initramfs/
+#    по желанию заменить init на свой.
+
+# 3. Собрать гибридный образ:
+python scripts/local-boot-edit.py repack work/ boot-pmos.img
+
+# Или использовать готовый скрипт:
+./scripts/build-pmos-boot.sh work/ boot-pmos.img
+
+# 4. Запустить:
+fastboot boot boot-pmos.img
+```
+
+Готовый `boot-pmos.img` (ядро 6.17 + 패тчи дисплея + Alpine initramfs) собран локально и лежит в `out/boot-pmos.img`. Его можно добавить в релиз `courbet-screen-fixed` как дополнительный ассет.
+
 ## Как проверять на телефоне
 
 Нужен разблокированный загрузчик. **Ничего не прошиваем** — только `fastboot boot`:
