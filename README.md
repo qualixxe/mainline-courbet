@@ -76,36 +76,54 @@ tip-ревизии получаются headless. `config/courbet.fragment` ег
 6. `scripts/build-initramfs.sh` — Alpine minirootfs 3.21.9 aarch64 + наш init +
    модули ядра + firmware courbet. Firmware-репо кладёт блобы в
    `qcom/sm7150/courbet/`, а dts просит `qcom/sm7150/xiaomi/courbet/` — делаем оба пути.
-   `modem.mbn` (62 MiB) исключён.
+   Исключены `modem.mbn` (62 MiB) и DSP/venus/wlan-блобы (~27 MiB): ramdisk должен
+   влезть под адрес dtb `0x01f00000`.
 7. `scripts/mkbootimg.py` — вендоренный AOSP mkbootimg.
 
-## Два boot.img, потому что конвенции две
+## Упаковка: конвенция снята с самого телефона
 
-Локально проверить нечем, а в исходниках задокументированы **две разные** раскладки,
-поэтому CI делает обе. Обе — под `fastboot boot`, то есть **загрузка в RAM, ничего
-не прошивается**.
+Раскладка не угадана — **снят дамп собственного раздела `boot` courbet и прочитан
+его заголовок**. Он оказался таким:
 
-| файл | header | kernel | dtb |
-|---|---|---|---|
-| `boot.img` | v1 | `Image.gz` | приклеен к концу kernel (конвенция postmarketOS, `deviceinfo_header_version="1"`, `append_dtb="true"`) |
-| `boot-stock.img` | v2 | несжатый `Image` | отдельной секцией после ramdisk (как stock Android: `header_size=1660@1644`, `dtb_size@1648`) |
+| поле | значение |
+|---|---|
+| `header_version` | **2** (`header_size=1660@1644`, `dtb_size@1648`, `dtb_addr@1652`) |
+| kernel | **gzip** `Image.gz`, не сырой `Image` |
+| dtb | **отдельной секцией**, не приклеен к kernel |
+| адреса | kernel `0x8000`, ramdisk `0x01000000`, tags `0x100`, dtb `0x01f00000` |
+| page / base | 4096 / `0x0` |
+| `os_version` | `0x1a00017a` = `--os_version 13.0.0 --os_patch_level 2023-10` |
 
-Общие параметры: page 4096, base `0x0`, kernel `0x8000`, tags `0x100`.
+Отсюда два жёстких вывода, оба проверены на телефоне:
+
+* **Сырой `Image` ABL не принимает вообще** — `Failed to load/authenticate boot
+  image: Load Error`. Только gzip.
+* **Ramdisk обязан влезть под `0x01f00000`**, иначе он перекрывает dtb. Полный
+initramfs с DSP-блобами — 25.3 МиБ и не влезает, поэтому `build-initramfs.sh`
+выкидывает `adsp/cdsp/venus/wlanmdsp` (~27 МиБ в распакованном виде): для шелла
+они не нужны. Остаётся **11.6 МиБ**, зазор до dtb ~3.4 МиБ.
+
+CI делает два образа, оба под `fastboot boot` — **загрузка в RAM, ничего не
+прошивается**:
+
+| файл | header | kernel | dtb | статус |
+|---|---|---|---|---|
+| `boot.img` | v2 | `Image.gz` | отдельной секцией | **основной**, один в один как stock |
+| `boot-pmos.img` | v1 | `Image.gz` | приклеен к концу kernel | конвенция postmarketOS; ABL принимает, но не загрузилось |
+
 cmdline `console=tty0 loglevel=8 ignore_loglevel` (ABL дописывает его к
 `chosen/bootargs`, последний `console=` выигрывает → fbcon).
 
-Адреса загрузки **разные**, и это не косметика. У pmOS-раскладки ramdisk стоит на
-`0x01000000` (16 МиБ) — туда влезает сжатый `Image.gz` (13.7 МиБ) с приклеенным
-dtb, зазор 2.19 МиБ. Несжатый `Image` у нас 37.7 МиБ, поэтому в stock-раскладке
-ramdisk и dtb **вычисляются из реальных размеров** секций и выравниваются на
-2 МиБ: при текущих размерах это `0x02600000` и `0x04000000`. Со стоковыми
-`0x01000000`/`0x01f00000` kernel, ramdisk и dtb перекрывались бы все три —
-загрузчик затёр бы сам себя. `scripts/bootinfo.py` печатает карту
-`[addr, addr+size)` каждого образа и **роняет CI**, если секции пересекаются.
+`scripts/bootinfo.py` печатает карту `[addr, addr+size)` каждого образа и
+**роняет CI**, если секции пересекаются. Текущая карта `boot.img`:
 
-Размеры: initramfs 25.3 МиБ, `boot.img` ~39 МиБ, `boot-stock.img` ~63 МиБ.
-Начинать стоит с `boot.img`: он и по конвенции проверенный, и вдвое меньше —
-у загрузчика может не хватить download-буфера на второй.
+```
+kernel   0x00008000 .. 0x00dba7b0  (14362544)
+ramdisk  0x01000000 .. 0x01b9692f  (12151087)
+dtb      0x01f00000 .. 0x01f15bcc  (89036)
+```
+
+Размеры: initramfs 11.6 МиБ, `boot.img` 25.4 МиБ.
 
 ## Как запустить сборку
 
@@ -116,7 +134,7 @@ gh run watch -R qualixxe/mainline-courbet
 
 Inputs: `kernel_repo`, `kernel_ref` (например `sm7150-mainline/linux` + `v6.13.4` как
 fallback), `with_firmware`, `cmdline`. Результат — GitHub Release с `boot.img`,
-`boot-stock.img`, `initramfs.cpio.gz`, `Image.gz`, dtb, `config`, `MANIFEST.txt`,
+`boot-pmos.img`, `initramfs.cpio.gz`, `Image.gz`, dtb, `config`, `MANIFEST.txt`,
 `SHA256SUMS.txt`, `build.log`.
 
 ## Как проверять на телефоне
@@ -125,7 +143,7 @@ fallback), `with_firmware`, `cmdline`. Результат — GitHub Release с 
 
 ```bash
 adb reboot bootloader
-fastboot boot boot.img          # если не пошло — fastboot boot boot-stock.img
+fastboot boot boot.img          # если не пошло — fastboot boot boot-pmos.img
 ```
 
 Дальше телефон должен появиться как COM-порт (`USB Serial Device`). Открыть его
@@ -163,8 +181,26 @@ recovery и читать `/sys/fs/pstore/console-ramoops-0`: ramoops переж�
 * **работает**: display, GPU, WiFi (WCN3990 SNOC / ath10k), battery, modem, NFC, OTG
 * **не работает**: touch, audio, camera, GPS, sensors
 
-Это ориентир, а не гарантия нашей сборки: **зелёный CI означает только то, что ядро
-собралось и упаковано. Загрузку на телефоне ещё никто не подтверждал.**
+Это ориентир, а не гарантия нашей сборки. **Фактический статус на 2026-11-14:
+ядро собирается и упаковано, но загрузку на телефоне получить пока не удалось.**
+
+Что уже проверено на живом courbet (загрузчик разблокирован, все опыты —
+`fastboot boot`, то есть RAM, ни один раздел не прошит):
+
+* ABL **принимает** наш образ и передаёт ему управление — отказа
+  `Failed to load/authenticate` нет, телефон уходит в reboot вместо ошибки.
+* Контрольный опыт: дамп стокового boot-раздела тем же `fastboot boot`
+  **загружается** в recovery с root-adb. Значит путь доставки рабочий, проблема
+  в нашем kernel/DTB, а не в упаковке или загрузчике.
+* `/sys/fs/pstore` после неудачной попытки содержит **только старый лог 4.14**
+  (`4.14.355-openela-perf`), ни одной mainline-записи. То есть ядро умирает
+  **до инициализации console и ramoops** — очень рано.
+* Отброшены гипотезы: перекрытие секций (карта чистая), отсутствие
+  `qcom,msm-id`/`board-id`/`pmic-id` в DTB (все три на месте), «16K pages»
+  (`flags=0xa` и у stock тоже, в конфиге `ARM64_4K_PAGES=y`), анти-rollback по
+  `os_version` (образ со стоковым `0x1a00017a` ведёт себя так же).
+* Главный оставшийся подозреваемый — **стоковый DTBO**, который ABL накладывает
+  на наше дерево (`androidboot.dtbo_idx=0`). Проверяется стиранием `dtbo`.
 
 Отдельно про WiFi: в `firmware-xiaomi-courbet` лежит только `wlanmdsp.mbn`, а
 `ath10k_snoc` нужны ещё `ath10k/WCN3990/hw1.0/firmware-5.bin` и `board-2.bin` из

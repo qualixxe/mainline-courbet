@@ -14,6 +14,19 @@ ALPINE_VER=3.21.9
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-${ALPINE_VER}-aarch64.tar.gz"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
+# courbet's bootloader loads the ramdisk at 0x01000000 and the dtb at 0x01f00000,
+# so the compressed ramdisk has to stay under 15 MiB. The DSP/venus/wlan blobs are
+# ~27 MiB of that and none of them are needed to reach a shell, so they stay out
+# until audio/camera/modem are actually brought up. modem.mbn is another 62 MiB of
+# carrier configs.
+SLIM_EXCLUDES=(
+	--exclude 'modem.mbn' --exclude 'modem_pr'
+	--exclude 'adsp.mbn' --exclude 'cdsp.mbn' --exclude 'venus.mbn'
+	--exclude 'wlanmdsp.mbn'
+	--exclude 'adspr.jsn' --exclude 'adsps.jsn' --exclude 'adspua.jsn'
+	--exclude 'cdspr.jsn'
+)
+
 rm -rf "$ROOT"
 mkdir -p "$ROOT"
 
@@ -42,10 +55,9 @@ fi
 
 if [ -n "$FWDIR" ]; then
 	echo "::group::firmware"
-	# modem.mbn is 62 MiB of carrier configs we have no use for during bring-up.
 	mkdir -p "$ROOT/lib/firmware/qcom/sm7150"
 	if [ -d "$FWDIR/lib/firmware/qcom/sm7150/courbet" ]; then
-		rsync -a --exclude 'modem.mbn' --exclude 'modem_pr' \
+		rsync -a "${SLIM_EXCLUDES[@]}" \
 			"$FWDIR/lib/firmware/qcom/sm7150/courbet" \
 			"$ROOT/lib/firmware/qcom/sm7150/"
 	fi
@@ -53,10 +65,9 @@ if [ -n "$FWDIR" ]; then
 	# repo ships qcom/sm7150/courbet/... . Provide both paths.
 	mkdir -p "$ROOT/lib/firmware/qcom/sm7150/xiaomi"
 	ln -sfn ../courbet "$ROOT/lib/firmware/qcom/sm7150/xiaomi/courbet"
-	# Anything not under the courbet subdir (wlanmdsp, board files, gpu zap).
+	# Anything not under the courbet subdir (board files, gpu zap).
 	if [ -d "$FWDIR/lib/firmware/qcom" ]; then
-		rsync -a --ignore-existing \
-			--exclude 'sm7150/courbet/modem.mbn' --exclude 'sm7150/courbet/modem_pr' \
+		rsync -a --ignore-existing "${SLIM_EXCLUDES[@]}" \
 			"$FWDIR/lib/firmware/qcom/" "$ROOT/lib/firmware/qcom/"
 	fi
 	echo "::endgroup::"

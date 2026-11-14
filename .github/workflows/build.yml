@@ -7,15 +7,16 @@ name: build mainline kernel for courbet
 # v6.13.4 there and was forward-ported to 6.17 on kevinwidjaja21/linux's
 # courbet_main branch. That branch is the default source here.
 #
-# Two boot images are produced because courbet's bootloader has two documented
-# conventions and we cannot test locally:
-#   boot.img        header v1, Image.gz with the dtb appended to the kernel
-#                   (the postmarketOS convention, deviceinfo header_version=1)
-#   boot-stock.img  header v2, uncompressed Image, dtb in its own section after
-#                   the ramdisk (the stock Android layout: header_size=1660
-#                   @1644, dtb_size @1648). Load offsets are computed from the
-#                   real section sizes, because our Image/initramfs are far
-#                   bigger than stock and would overlap at the stock offsets.
+# Two boot images are produced. courbet's own boot partition was dumped and its
+# header read, so the primary image now matches that layout exactly:
+#   boot.img       header v2, gzip Image.gz, dtb in its own section, loaded at
+#                  kernel 0x8000 / ramdisk 0x01000000 / dtb 0x01f00000,
+#                  os_version 13.0.0 / patch 2023-10 (raw 0x1a00017a).
+#                  ABL refuses a raw uncompressed Image outright, so gzip is
+#                  mandatory. The ramdisk is slimmed to fit under the dtb address.
+#   boot-pmos.img  header v1, Image.gz with the dtb appended to the kernel
+#                  (the postmarketOS convention, deviceinfo header_version=1).
+#                  ABL accepts this too; kept as an alternative.
 # Both are meant for `fastboot boot`, which loads into RAM and writes nothing.
 # scripts/bootinfo.py rejects either image if its load sections overlap.
 
@@ -57,6 +58,7 @@ env:
   KERNEL_OFFSET: '0x00008000'
   RAMDISK_OFFSET: '0x01000000'
   TAGS_OFFSET: '0x00000100'
+  DTB_OFFSET: '0x01f00000'
 
 jobs:
   build:
@@ -163,6 +165,23 @@ jobs:
           cp "$K/Image.gz" out/Image.gz
           cp "$K/dts/qcom/$DTB" "out/$DTB"
 
+          # Primary image: byte-for-byte the same conventions as courbet's own
+          # boot partition. ABL rejects a raw Image ("Failed to load/authenticate
+          # boot image: Load Error"), so the kernel must be gzip.
+          python3 scripts/mkbootimg.py \
+            --header_version 2 \
+            --kernel "$K/Image.gz" \
+            --ramdisk out/initramfs.cpio.gz \
+            --dtb "$K/dts/qcom/$DTB" \
+            --cmdline "$CMDLINE" \
+            --base "$BASE" --pagesize "$PAGESIZE" \
+            --kernel_offset "$KERNEL_OFFSET" \
+            --ramdisk_offset "$RAMDISK_OFFSET" \
+            --tags_offset "$TAGS_OFFSET" \
+            --dtb_offset "$DTB_OFFSET" \
+            --os_version 13.0.0 --os_patch_level 2023-10 \
+            -o out/boot.img
+
           # postmarketOS convention: dtb appended to the compressed kernel.
           cat "$K/Image.gz" "$K/dts/qcom/$DTB" > out/Image.gz-dtb
           python3 scripts/mkbootimg.py \
@@ -174,34 +193,11 @@ jobs:
             --kernel_offset "$KERNEL_OFFSET" \
             --ramdisk_offset "$RAMDISK_OFFSET" \
             --tags_offset "$TAGS_OFFSET" \
-            -o out/boot.img
-
-          # Stock Android convention: uncompressed Image, dtb in its own section.
-          # Our Image is ~38 MiB and the initramfs ~30 MiB, so the stock offsets
-          # (ramdisk 0x01000000, dtb 0x01f00000) would land inside the kernel.
-          # Derive them from the real sizes instead, each on a 2 MiB boundary.
-          align() { echo $(( ( ($1 + $2 - 1) / $2 ) * $2 )); }
-          KSIZE=$(stat -c%s "$K/Image")
-          RSIZE=$(stat -c%s out/initramfs.cpio.gz)
-          STOCK_RAMDISK=$(align $(( 0x8000 + KSIZE )) 0x200000)
-          STOCK_DTB=$(align $(( STOCK_RAMDISK + RSIZE )) 0x200000)
-          printf 'stock offsets: kernel=0x8000 ramdisk=%#x dtb=%#x\n' \
-            "$STOCK_RAMDISK" "$STOCK_DTB"
-          python3 scripts/mkbootimg.py \
-            --header_version 2 \
-            --kernel "$K/Image" \
-            --ramdisk out/initramfs.cpio.gz \
-            --dtb "$K/dts/qcom/$DTB" \
-            --cmdline "$CMDLINE" \
-            --base "$BASE" --pagesize "$PAGESIZE" \
-            --kernel_offset "$KERNEL_OFFSET" \
-            --ramdisk_offset "$(printf '0x%08x' "$STOCK_RAMDISK")" \
-            --tags_offset "$TAGS_OFFSET" \
-            --dtb_offset "$(printf '0x%08x' "$STOCK_DTB")" \
-            -o out/boot-stock.img
+            --os_version 13.0.0 --os_patch_level 2023-10 \
+            -o out/boot-pmos.img
 
           echo "--- boot image headers ---"
-          python3 scripts/bootinfo.py out/boot.img out/boot-stock.img
+          python3 scripts/bootinfo.py out/boot.img out/boot-pmos.img
           ls -la out/
 
       - name: Checksums and manifest
@@ -233,7 +229,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "courbet mainline ${KREL} (run ${{ github.run_number }})" \
             --notes-file out/MANIFEST.txt \
-            out/boot.img out/boot-stock.img out/initramfs.cpio.gz \
+            out/boot.img out/boot-pmos.img out/initramfs.cpio.gz \
             out/Image.gz out/$DTB out/config out/MANIFEST.txt \
             out/SHA256SUMS.txt out/build.log out/kernel-commit.txt
           echo "released $TAG"
