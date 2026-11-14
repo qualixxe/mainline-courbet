@@ -212,20 +212,27 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 * **Экран чёрный.** Панель инициализируется без единой ошибки, DSI PLL на
   рантайме залочен (бит `PLL_UNLOCKED` в `dsi_err_worker` не выставлен), но DSI
   сыплет FIFO underflow (`status=4`), а DPU — `wait_for_idle ... ret:-110` и
-  `enc33 frame done timeout` каждые ~88 мс. Причина найдена разбором исходников
-  и заводского dtbo: сгенерированный драйвер объявляет **один** DSC-слайс
-  шириной 1080 при 10 bpp, тогда как mainline DPU всегда резервирует **два**
-  DSC-блока (`dpu_encoder.c`, `dpu_encoder_setup_topology`) и пишет `slice_width`
-  в `DSC_SLICE` без деления (`dpu_hw_dsc.c`). Каждому энкодеру достаётся
-  полстроки — `enc_ip_w = intf_ip_w / num_dsc` в `dpu_encoder_prep_dsc`, — так
-  что слайс шириной 1080 не завершается никогда: FIFO пустеет, `pp_done` не
-  приходит. Заводской dtbo вдобавок говорит `qcom,mdss-dsc-bit-per-pixel = <8>`,
-  а не 10, и PPS из `prepare()` наследует эту ошибку. Исправлено патчем
-  `panel-k9a-dsc-topology.patch`: 540 / 2 слайса / 8 bpp — ровно как в
-  `panel-visionox-r66451.c`, которая водит 1080p-панель на том же SM7150.
-  **Проверено на телефоне: поток ошибок не прекратился.** Конфигурация DSC
-  теперь самосогласована и совпадает с рабочей панелью того же SoC, так что
-  правка оставлена, но корень чёрного экрана — не только в ней.
+  `enc33 frame done timeout` каждые ~88 мс. Корень найден сравнением с
+  downstream-ядром courbet (`Aciss21/kernel_xiaomi_sm6150`, ветка `aosp`,
+  4.14.357-openela): заводская панель
+  `dsi-panel-k9a-36-02-0a-mp-dsc-cmd.dtsi` объявляет **один** DSC-слайс
+  шириной 1080 при **8 bpp**, а топология в dtbo — `<1 1 1>`, то есть один
+  LM, один DSC, один INTF. Mainline же всегда резервирует **два** DSC-блока
+  (`dpu_encoder_update_topology`, условие `catalog->dsc_count >= 2`; у SM7150
+  их два) и делит строку пополам — `enc_ip_w = intf_ip_w / num_dsc` в
+  `dpu_encoder_prep_dsc`, — тогда как `dpu_hw_dsc_config` пишет `slice_width`
+  в `DSC_SLICE` без деления. Панель при этом получает PPS из `prepare()`, а её
+  вендорный регистр DSC `0x91` прошит заводским payload'ом на один слайс
+  1080 — переписать его нельзя, кодировка полей неизвестна. Значит подгонять
+  надо DPU, а не панель. Два патча:
+  * `panel-k9a-dsc-topology.patch` — 1080 / 1 слайс / **8 bpp** (было 10);
+  * `dpu-dsc-single-slice.patch` — при `slice_count == 1` DPU берёт один
+    DSC-блок; `dpu_crtc_get_topology` тогда даёт `num_lm = 1`
+    (`1080 > MAX_HDISPLAY_SPLIT` ложно), то есть ровно заводские 1:1:1.
+
+  Первая попытка шла в обратную сторону (540 / 2 слайса, как в
+  `panel-visionox-r66451.c`) — **проверено на телефоне, поток ошибок не
+  прекратился**: DPU и DSI соглашались друг с другом, но панель нет.
 * **GPU.** Adreno 618 грузит микрокод SQE из `qcom/a630_sqe.fw`, которого нет в
   репозитории блобов courbet. Добавлен из linux-firmware, на телефоне
   подтверждено: `loaded qcom/a630_sqe.fw from new location`. Следом не хватало
@@ -264,9 +271,17 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
   Ошибка DSI непрерывная, а не раз в кадр — то есть условие в железе
   персистентное, а не привязано к передаче кадра.
 * Заводской dtbo: `qcom,display-topology = <1 1 1>` (один LM/DSC/INTF),
-  `qcom,mdss-dsi-panel-clockrate = <652000000>`. Mainline принудительно берёт
-  два DSC, а bit clk получается 522 МГц против заводских 652 — расхождение
-  замечено, причина не установлена.
+  `qcom,mdss-dsi-panel-clockrate = <652000000>`; в dtsi downstream — 682000000.
+  Расхождение с нашими 522 МГц объяснено: downstream берёт bit clk **прямо из
+  DT** (`dsi_display.c`, `dsi_display_update_dsi_bitrate(display,
+  mode->timing.clk_rate_hz)`), а mainline **вычисляет** его из таймингов и bpp
+  (`dsi_adjust_pclk_for_compression` → `dsi_byte_clk_get_rate`). Полосы при
+  522 МГц хватает: DPU отдаёт `pclk × 3` = 208.7 МБ/с, DSI забирает
+  `byte_clk × 4 lanes` = 260.9 МБ/с, панели нужно 1080 × 2400 × 60 =
+  155.5 МБ/с. Так что это не корень, а следствие другой формулы.
+* Widebus отброшен: `msm_dsi_host_is_wide_bus_enabled()` и
+  `dpu_encoder_is_widebus_enabled()` — один и тот же источник, DPU и DSI
+  выбирают 3 или 6 байт на pclk согласованно.
 
 ## Ссылки
 
@@ -275,4 +290,8 @@ pstore чистый. Все опыты — `fastboot boot`, то есть RAM; �
 * https://github.com/sm7150-mainline/firmware-xiaomi-courbet — блобы
 * https://gitlab.postmarketos.org/kevinwidjaja21/pmaports — ветка `courbet_stable`
 * https://github.com/MiCode/Xiaomi_Kernel_OpenSource/tree/courbet-r-oss — downstream 4.14
+* https://github.com/Aciss21/kernel_xiaomi_sm6150/tree/aosp — downstream courbet
+  4.14.357-openela, источник заводской конфигурации панели:
+  `arch/arm64/boot/dts/qcom/xiaomi/courbet/dsi-panel-k9a-36-02-0a-mp-dsc-cmd.dtsi`
+  и `drivers/gpu/drm/msm/dsi-staging/` (ветки `aosp`/`oem`, не `16`)
 * https://wiki.postmarketos.org/wiki/Xiaomi_Mi_11_Lite_4G_(xiaomi-courbet)

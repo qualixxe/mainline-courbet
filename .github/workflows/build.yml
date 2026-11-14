@@ -107,11 +107,16 @@ jobs:
           # panel disabled.
           git -C linux apply --verbose \
             "$PWD/patches/panel-k9a-dcs-write-seq.patch"
-          # The generated DSC params (one 1080-wide slice, 10 bpp) do not match
-          # the DPU, which always splits DSC over two blocks, nor the panel,
-          # whose stock dtbo says 8 bpp. See the patch header for the evidence.
+          # The generated DSC params say 10 bpp; courbet's downstream panel
+          # dtsi and the dtbo dumped from the phone both say 8. See the patch
+          # header for the evidence.
           git -C linux apply --verbose \
             "$PWD/patches/panel-k9a-dsc-topology.patch"
+          # Stock topology is <1 1 1>: one LM, one DSC, one INTF. Mainline
+          # otherwise forces two DSC blocks and halves the slice, which the
+          # panel decoder was never programmed for.
+          git -C linux apply --verbose \
+            "$PWD/patches/dpu-dsc-single-slice.patch"
           DTS="linux/arch/arm64/boot/dts/qcom/${DTB%.dtb}.dts"
           cat patches/courbet-usb-peripheral.dtsi >> "$DTS"
           echo "--- tail of $DTS ---"

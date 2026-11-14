@@ -1,0 +1,42 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dpu: do not split a single-slice DSC panel over two blocks
+
+dpu_encoder_update_topology() always reserves two DSC blocks (and, via
+dpu_crtc_get_topology(), two layer mixers) whenever the catalog has two DSC
+blocks, regardless of what the panel asked for. dpu_encoder_prep_dsc() then
+feeds each block intf_ip_w / num_dsc pixels while dpu_hw_dsc_config() writes
+dsc->slice_width into DSC_SLICE verbatim, so a panel that declares one slice
+covering the whole line gets two encoders each programming a full-width slice
+over half a line.
+
+courbet's K9A panel is exactly that case: its downstream dtsi and the dtbo
+dumped from the phone both declare slice-width 1080, slice-per-pkt 1 and
+qcom,display-topology = <1 1 1>. The panel decoder is initialised for one
+1080-wide slice per line, so the DPU must use one DSC block and one LM.
+
+Respect slice_count when it is 1. dpu_crtc_get_topology() then picks num_lm
+from hdisplay (1080 is not > MAX_HDISPLAY_SPLIT), giving the 1:1:1 topology
+the panel expects. Panels that declare two slices per line keep the existing
+2 DSC / 2 LM behaviour.
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -684,10 +684,17 @@
+ 		 * screens.
+ 		 */
+ 		WARN(topology->num_intf > 2,
+ 		     "DSC topology cannot support more than 2 interfaces\n");
+-		if (topology->num_intf >= 2 || dpu_kms->catalog->dsc_count >= 2)
++		/*
++		 * One slice per line means one DSC encoder: splitting the line
++		 * would change the slice geometry the panel decoder was
++		 * programmed with.
++		 */
++		if (dsc->slice_count == 1)
++			topology->num_dsc = 1;
++		else if (topology->num_intf >= 2 || dpu_kms->catalog->dsc_count >= 2)
+ 			topology->num_dsc = 2;
+ 		else
+ 			topology->num_dsc = 1;
+ 	}
+ 
