@@ -150,7 +150,7 @@ gh run watch -R qualixxe/mainline-courbet
 ### Готовый экранный тестовый образ
 
 На подключённом `courbet` подтверждён `fastboot boot`-образ:
-https://github.com/qualixxe/mainline-courbet/releases/latest/download/boot.img
+https://github.com/qualixxe/mainline-courbet/releases/download/courbet-screen-fixed/boot.img
 
 Это локально пропатченный бинарный образ (заплатки дисплейного стека применены
 в исходниках репозитория). Используй только `fastboot boot` — не прошивай разделы.
