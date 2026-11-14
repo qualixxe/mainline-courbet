@@ -16,6 +16,8 @@ mkdir -p /dev/pts /tmp /run /config
 mount -t devpts devpts /dev/pts
 mount -t tmpfs  tmpfs  /tmp
 mount -t tmpfs  tmpfs  /run
+# DRM register dumps and dynamic_debug only exist under debugfs.
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
 
 dmesg > /tmp/dmesg.txt 2>/dev/null
 

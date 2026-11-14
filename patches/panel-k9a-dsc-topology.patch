@@ -1,0 +1,45 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/panel: k9a-36-02-0a-mp-dsc: match the DPU's two-block DSC topology
+
+The generated driver declares one 1080-wide DSC slice at 10 bpp. Neither
+matches the hardware:
+
+  * mainline's dpu_encoder_setup_topology() always reserves two DSC blocks
+    and two layer mixers once DSC is enabled, and dpu_hw_dsc_config() writes
+    slice_width into DSC_SLICE verbatim. Each encoder is fed half a line
+    (dpu_encoder_prep_dsc: enc_ip_w = intf_ip_w / num_dsc), so a 1080-wide
+    slice never completes. The DSI FIFO underflows and pp_done never fires:
+    "dpu_encoder_phys_cmd_prepare_for_kickoff failed wait_for_idle ... -110"
+    followed by "enc33 frame done timeout", with a black panel.
+    panel-visionox-r66451.c, which drives a 1080p panel on the same SM7150,
+    declares slice_width 540 / slice_count 2 for exactly this reason.
+
+  * courbet's stock dtbo carries qcom,mdss-dsc-bit-per-pixel = <8>. At 10 bpp
+    the DPU and DSI agree with each other but the panel's decoder does not,
+    since prepare() packs the PPS from this same struct.
+
+--- a/drivers/gpu/drm/panel/panel-k9a-36-02-0a-mp-dsc.c
++++ b/drivers/gpu/drm/panel/panel-k9a-36-02-0a-mp-dsc.c
+@@ -339,17 +339,13 @@
+ 	ctx->dsc.dsc_version_major = 1;
+ 	ctx->dsc.dsc_version_minor = 1;
+ 
+-	/* TODO: Pass slice_per_pkt = 1 */
++	/* The DPU always splits DSC over two blocks, so a slice is half a line. */
+ 	ctx->dsc.slice_height = 12;
+-	ctx->dsc.slice_width = 1080;
+-	/*
+-	 * TODO: hdisplay should be read from the selected mode once
+-	 * it is passed back to drm_panel (in prepare?)
+-	 */
+-	WARN_ON(1080 % ctx->dsc.slice_width);
+-	ctx->dsc.slice_count = 1080 / ctx->dsc.slice_width;
++	ctx->dsc.slice_width = 540;
++	ctx->dsc.slice_count = 2;
+ 	ctx->dsc.bits_per_component = 10;
+-	ctx->dsc.bits_per_pixel = 10 << 4; /* 4 fractional bits */
++	/* Stock dtbo: qcom,mdss-dsc-bit-per-pixel = <8>. */
++	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
+ 	ctx->dsc.block_pred_enable = true;
+ 
+ 	ret = mipi_dsi_attach(dsi);

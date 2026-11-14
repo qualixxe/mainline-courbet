@@ -107,6 +107,11 @@ jobs:
           # panel disabled.
           git -C linux apply --verbose \
             "$PWD/patches/panel-k9a-dcs-write-seq.patch"
+          # The generated DSC params (one 1080-wide slice, 10 bpp) do not match
+          # the DPU, which always splits DSC over two blocks, nor the panel,
+          # whose stock dtbo says 8 bpp. See the patch header for the evidence.
+          git -C linux apply --verbose \
+            "$PWD/patches/panel-k9a-dsc-topology.patch"
           DTS="linux/arch/arm64/boot/dts/qcom/${DTB%.dtb}.dts"
           cat patches/courbet-usb-peripheral.dtsi >> "$DTS"
           echo "--- tail of $DTS ---"
