@@ -117,6 +117,10 @@ jobs:
           # panel decoder was never programmed for.
           git -C linux apply --verbose \
             "$PWD/patches/dpu-dsc-single-slice.patch"
+          # /dev/mem is blocked by IO_STRICT_DEVMEM, so the raw DSI FIFO status
+          # cannot be read from the shell. Log it once from the driver instead.
+          git -C linux apply --verbose \
+            "$PWD/patches/dsi-fifo-status-once.patch"
           DTS="linux/arch/arm64/boot/dts/qcom/${DTB%.dtb}.dts"
           cat patches/courbet-usb-peripheral.dtsi >> "$DTS"
           echo "--- tail of $DTS ---"

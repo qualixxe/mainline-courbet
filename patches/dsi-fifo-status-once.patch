@@ -1,0 +1,23 @@
+From: qualixxe <qualixxe@users.noreply.github.com>
+Subject: [PATCH] drm/msm/dsi: log the raw FIFO status once
+
+dsi_err_worker() only prints the accumulated err_work_state, so a persistent
+"status=4" (DSI_ERR_STATE_FIFO) does not say whether a data lane HS FIFO
+overflows or underflows, or which lane. /dev/mem is blocked by
+IO_STRICT_DEVMEM on this board, so the register cannot be read from userspace.
+
+Print the raw REG_DSI_FIFO_STATUS the first time it is non-zero. Bits 16-19
+are DLN0..3 HS overflow, 20-23 DLN0..3 HS underflow, 14 CMD_DMA underflow,
+15 CMD_MDP underflow.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -1593,6 +1593,7 @@
+ 	status = dsi_read(msm_host, REG_DSI_FIFO_STATUS);
+ 
+ 	/* fifo underflow, overflow */
+ 	if (status) {
++		pr_info_once("DSI: raw FIFO_STATUS=0x%08x\n", status);
+ 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
+ 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
+ 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
