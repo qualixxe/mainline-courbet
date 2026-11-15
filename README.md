@@ -14,7 +14,7 @@ Mainline Linux для **Xiaomi Mi 11 Lite 4G** (`courbet`, M2101K9AG, Qualcomm *
 
 ## Что такое mainline и зачем он тут
 
-Стоковое ядро courbet — это **downstream**: CAF-форк Linux **4.14** с вендорными патчами Xiaomi/Qualcomm, которое живёт только в Android-дереве (`MiCode/Xiaomi_Kernel_OpenSource`, ветка `courbet-r-oss`, платформа называется `sdmmagpie`, msm-id 365). Он�� не обновляется, не переносится на новые версии и тянет за собой весь Android-стек.
+Стоковое ядро courbet — это **downstream**: CAF-форк Linux **4.14** с вендорными патчами Xiaomi/Qualcomm, которое живёт только в Android-дереве (`MiCode/Xiaomi_Kernel_OpenSource`, ветка `courbet-r-oss`, платформа называется `sdmmagpie`, msm-id 365). Он не обновляется, не переносится на новые версии и тянет за собой весь Android-стек.
 
 **Mainline** — это ядро с kernel.org, то же самое, что работает на серверах и десктопах: свежие версии, нормальные драйверы, никакой привязки к Android. Для телефона это даёт postmarketOS, обычный Linux userspace, регулярные обновления и возможность чинить железо самому.
 
