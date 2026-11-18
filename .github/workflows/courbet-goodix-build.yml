@@ -44,16 +44,17 @@ jobs:
 
       - name: Configure kernel
         run: |
-          cp config/base.config kernel/.config
-          kernel/scripts/kconfig/merge_config.sh -m \
-            kernel/.config \
-            config/courbet.fragment \
-            config/courbet-goodix.fragment
-          make -C kernel ARCH=arm64 \
+          cd kernel
+          cp "$GITHUB_WORKSPACE/config/base.config" .config
+          scripts/kconfig/merge_config.sh -m .config \
+            "$GITHUB_WORKSPACE/config/courbet.fragment" \
+            "$GITHUB_WORKSPACE/config/courbet-goodix.fragment"
+          make ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           grep -E \
             'CONFIG_TOUCHSCREEN_GOODIX_BERLIN_SPI|CONFIG_DRM_PANEL_K9A_36_02_0A|CONFIG_LOCALVERSION' \
-            kernel/.config
+            .config
+          test "$(scripts/config --state TOUCHSCREEN_GOODIX_BERLIN_SPI)" = "y"
 
       - name: Build Image and Courbet DTB
         run: |
