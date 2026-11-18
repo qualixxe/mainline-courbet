@@ -56,12 +56,13 @@ jobs:
             .config
           test "$(scripts/config --state TOUCHSCREEN_GOODIX_BERLIN_SPI)" = "y"
 
-      - name: Build Image and Courbet DTB
+      - name: Build Image and Courbet DTBs
         run: |
           make -C kernel -j2 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            Image \
-            arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dtb
+            Image dtbs
+          test -f kernel/arch/arm64/boot/Image
+          test -f kernel/arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dtb
 
       - name: Collect kernel artifacts
         run: |
