@@ -1,0 +1,81 @@
+name: Build Courbet with Goodix GT9897 touchscreen
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'config/**'
+      - 'patches/**'
+      - '.github/workflows/courbet-goodix-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout build recipes
+        uses: actions/checkout@v4
+
+      - name: Install cross-build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libssl-dev libelf-dev pahole rsync cpio python3
+
+      - name: Fetch kernel source
+        run: |
+          git clone --depth=1 --branch courbet_main \
+            https://github.com/kevinwidjaja21/linux.git kernel
+
+      - name: Apply Courbet patches
+        run: |
+          cd kernel
+          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
+            echo "Applying $patch"
+            git apply --check "$patch"
+            git apply "$patch"
+          done
+          cat "$GITHUB_WORKSPACE/patches/courbet-usb-peripheral.dtsi" \
+            >> arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dts
+
+      - name: Configure kernel
+        run: |
+          cp config/base.config kernel/.config
+          kernel/scripts/kconfig/merge_config.sh -m \
+            kernel/.config \
+            config/courbet.fragment \
+            config/courbet-goodix.fragment
+          make -C kernel ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          grep -E \
+            'CONFIG_TOUCHSCREEN_GOODIX_BERLIN_SPI|CONFIG_DRM_PANEL_K9A_36_02_0A|CONFIG_LOCALVERSION' \
+            kernel/.config
+
+      - name: Build Image and Courbet DTB
+        run: |
+          make -C kernel -j2 ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            Image \
+            arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dtb
+
+      - name: Collect kernel artifacts
+        run: |
+          mkdir -p artifact
+          cp kernel/arch/arm64/boot/Image artifact/Image
+          cp kernel/arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dtb \
+            artifact/sm7150-xiaomi-courbet.dtb
+          cp kernel/.config artifact/config-6.17.0-courbet-goodix
+          sha256sum artifact/* | tee artifact/SHA256SUMS
+          tar -czf courbet-kernel-goodix-gt9897.tar.gz -C artifact .
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: courbet-kernel-goodix-gt9897
+          path: |
+            courbet-kernel-goodix-gt9897.tar.gz
+            artifact/SHA256SUMS
