@@ -53,7 +53,7 @@
  &spi8 {
 --- a/arch/arm64/configs/sm7150.config
 +++ b/arch/arm64/configs/sm7150.config
-@@ -687,7 +687,7 @@
+@@ -687,6 +687,6 @@
  CONFIG_MOUSE_ELAN_I2C=n
  CONFIG_TOUCHSCREEN_ATMEL_MXT=n
  CONFIG_TOUCHSCREEN_GOODIX=n
