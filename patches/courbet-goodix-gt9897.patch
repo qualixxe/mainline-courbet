@@ -1,0 +1,63 @@
+--- a/arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dts
++++ b/arch/arm64/boot/dts/qcom/sm7150-xiaomi-courbet.dts
+@@ -21,6 +21,23 @@
+ 
+ 	qcom,board-id = <45 0>;
+ 
++	/* Touch-panel rails from the Android Courbet DT overlay. */
++	touch_vddio_vreg: regulator-touch-vddio {
++		compatible = "regulator-fixed";
++		regulator-name = "touch_vddio_vreg";
++		gpio = <&tlmm 72 GPIO_ACTIVE_HIGH>;
++		startup-delay-us = <4000>;
++		enable-active-high;
++	};
++
++	touch_vddv_vreg: regulator-touch-vddv {
++		compatible = "regulator-fixed";
++		regulator-name = "touch_vddv_vreg";
++		gpio = <&tlmm 21 GPIO_ACTIVE_HIGH>;
++		startup-delay-us = <4000>;
++		enable-active-high;
++	};
++
+ 	reserved-memory {
+ 		tz_mem: trust-zone@86200000 {
+ 			reg = <0x0 0x86200000 0x0 0x4900000>;
+@@ -135,7 +152,25 @@
+ 	clock-frequency = <8000000>;
+ 	status = "okay";
+ 
+-	/* xiaomi,spits (spi ts) @ 0 */
++	touchscreen@0 {
++		compatible = "goodix,gt9897";
++		reg = <0>;
++		spi-max-frequency = <8000000>;
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <9 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-0 = <&ts_int_active &ts_reset_active>;
++		pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
++		pinctrl-names = "default", "sleep";
++
++		avdd-supply = <&touch_vddv_vreg>;
++		vddio-supply = <&touch_vddio_vreg>;
++
++		touchscreen-size-x = <1080>;
++		touchscreen-size-y = <2400>;
++	};
+ };
+ 
+ &spi8 {
+--- a/arch/arm64/configs/sm7150.config
++++ b/arch/arm64/configs/sm7150.config
+@@ -687,7 +687,7 @@
+ CONFIG_MOUSE_ELAN_I2C=n
+ CONFIG_TOUCHSCREEN_ATMEL_MXT=n
+ CONFIG_TOUCHSCREEN_GOODIX=n
+-CONFIG_TOUCHSCREEN_GOODIX_BERLIN_SPI=n
++CONFIG_TOUCHSCREEN_GOODIX_BERLIN_SPI=y
+ CONFIG_TOUCHSCREEN_ELAN=n
+ CONFIG_TOUCHSCREEN_EDT_FT5X06=n
