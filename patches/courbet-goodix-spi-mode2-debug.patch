@@ -1,0 +1,30 @@
+--- a/drivers/input/touchscreen/goodix_berlin_core.c
++++ b/drivers/input/touchscreen/goodix_berlin_core.c
+@@ -280,15 +280,23 @@
+ 
+ 		error = regmap_write(cd->regmap, GOODIX_BERLIN_SPI_MODE_REG,
+ 				      GOODIX_BERLIN_SPI_NORMAL_MODE_0);
+-		if (error)
++		if (error) {
++			dev_err(cd->dev, "SPI mode write failed: %d\n", error);
+ 			goto err_dev_reset;
++		}
+ 
+ 		error = regmap_read(cd->regmap, GOODIX_BERLIN_SPI_MODE_REG, &mode);
+-		if (error || mode != GOODIX_BERLIN_SPI_NORMAL_MODE_0) {
+-			if (!error)
+-				error = -EIO;
++		if (error) {
++			dev_err(cd->dev, "SPI mode read failed: %d\n", error);
++			goto err_dev_reset;
++		}
++		if (mode != GOODIX_BERLIN_SPI_NORMAL_MODE_0) {
++			dev_err(cd->dev, "SPI mode mismatch: read 0x%02x, expected 0x%02x\n",
++				mode, GOODIX_BERLIN_SPI_NORMAL_MODE_0);
++			error = -EIO;
+ 			goto err_dev_reset;
+ 		}
++		dev_info(cd->dev, "SPI mode selected: 0x%02x\n", mode);
+ 	}
+ 
+ 	error = goodix_berlin_dev_confirm(cd);
